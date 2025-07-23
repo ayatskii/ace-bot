@@ -1,9 +1,22 @@
-from telegram import Update
-from telegram.ext import CallbackContext, ConversationHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import CallbackContext, ConversationHandler, CommandHandler, MessageHandler, filters
 import logging
-from gemini_api import get_random_word_details, generate_ielts_writing_task, get_topic_specific_words, evaluate_writing
+from gemini_api import get_random_word_details, generate_ielts_writing_task, get_topic_specific_words, evaluate_writing, generate_speaking_question, generate_ielts_strategies, explain_grammar_structure
 
 logger = logging.getLogger(__name__)
+
+GET_WRITING_TOPIC = 1
+GET_GRAMMAR_TOPIC = 2
+
+
+# Add this to the top of bot_handlers.py
+import re
+
+def escape_markdown_v2(text: str) -> str:
+    """Escapes text for Telegram's MarkdownV2 parse mode."""
+    # The characters that need escaping are: _ * [ ] ( ) ~ ` > # + - = | { } . !
+    escape_chars = r'_*[]()~`>#+-=|{}.!'
+    return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
 
 async def start_command(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
@@ -20,7 +33,7 @@ async def help_command(update:Update, context: CallbackContext) -> None:
         "Here are the commands you can use:\n\n"
         "🧠 /vocabulary - Get new vocabulary words.\n"
         "✍️ /writing - Get an IELTS writing task.\n"
-        "🗣️ /speaking - Get an IELTS speaking prompt.\n"
+        "🗣️ /speaking - Get an IELTS speaking card.\n"
         "ℹ️ /info - Get tips and strategies for IELTS sections.\n"
         "📖 /grammar - Get an explanation of a grammar topic.\n"
         "🆘 /help - Show this help message again."
@@ -61,12 +74,70 @@ async def error_handler(update:Update, context: CallbackContext) -> None:
 ASK_WRITING_SUBMISSION = 1
 ASK_GRAMMAR_TOPIC = 2    
 
-async def handle_writing_command(update, context):
-    """Starts the writing task conversation."""
-    await update.message.reply_text("Please tell me if you want Task 1 or Task 2.")
-    # Store the initial task type choice context if needed later
-    # context.user_data['current_task'] = 'writing_task'
-    return ASK_WRITING_SUBMISSION # Transition to the state where we expect task type
+async def start_writing_task(update: Update, context: CallbackContext) -> int:
+    """Starts the writing task conversation and asks for a topic."""
+    await update.message.reply_text("💬 Please tell me the topic for your writing task.")
+    
+    # Transition to the GET_TOPIC state to wait for the user's answer
+    return GET_WRITING_TOPIC
+
+async def get_topic(update: Update, context: CallbackContext) -> int:
+    """Saves the user's topic and generates the task."""
+    user_topic = update.message.text
+    
+    # Save the topic in the context for later use
+    context.user_data['writing_topic'] = user_topic
+    
+    await update.message.reply_text(f"✅ Great! Generating a writing task on the topic: '{user_topic}'")
+    
+    # --- Now you can call your Gemini API function ---
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    writing_task = generate_ielts_writing_task(topic=user_topic)
+    await update.message.reply_text(writing_task, parse_mode='Markdown')
+    
+    # End the conversation
+    return ConversationHandler.END
+
+async def cancel(update: Update, context: CallbackContext) -> int:
+    """Cancels and ends the conversation."""
+    await update.message.reply_text("Operation cancelled.")
+    return ConversationHandler.END
+
+# Add these two functions to bot_handlers.py
+
+async def handle_speaking_command(update: Update, context: CallbackContext) -> None:
+    """Sends a message with three inline buttons for choosing a speaking part."""
+    keyboard = [
+        [InlineKeyboardButton("Part 1: Короткие вопросы", callback_data="speaking_part_1")],
+        [InlineKeyboardButton("Part 2: Карточка-монолог", callback_data="speaking_part_2")],
+        [InlineKeyboardButton("Part 3: Дискуссия", callback_data="speaking_part_3")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.message.reply_text("Выберите часть устного экзамена для практики:", reply_markup=reply_markup)
+
+async def speaking_part_callback(update: Update, context: CallbackContext) -> None:
+    """Parses the CallbackQuery and generates the speaking questions."""
+    query = update.callback_query
+
+    # Answer the callback query to remove the "loading" state from the button
+    await query.answer()
+
+    # The callback_data will be "speaking_part_1", "speaking_part_2", etc.
+    part_data = query.data
+    part_number_str = part_data.split('_')[-1]  # Extracts "1", "2", or "3"
+    part_for_api = f"Part {part_number_str}"
+
+    # Let the user know the bot is working by editing the original message
+    await query.edit_message_text(text=f"Отлично! 👍 Генерирую вопросы для {part_for_api}...")
+
+    # Call your Gemini API function
+    speaking_prompt = generate_speaking_question(part=part_for_api)
+
+    speaking_prompt = escape_markdown_v2(speaking_prompt)
+
+    # Send the generated content back to the user by editing the message again
+    await query.edit_message_text(text=speaking_prompt, parse_mode='MarkdownV2')
 
 async def receive_writing_task_type(update, context):
     """Receives the user's choice of Task 1 or Task 2 and then generates the task."""
@@ -106,3 +177,75 @@ async def handle_grammar_command(update, context):
 #     await update.message.reply_text(f"Here's an explanation of '{grammar_topic}':\n\n{explanation}")
 #     return ConversationHandler.END # End the    
 
+async def handle_info_command(update: Update, context: CallbackContext) -> None:
+    """Sends a message with inline buttons for Listening and Reading sections."""
+    keyboard = [
+        [
+            InlineKeyboardButton("🎧 Listening Strategies", callback_data="info_listening"),
+        ],
+        [
+            InlineKeyboardButton("📖 Reading Strategies", callback_data="info_reading"),
+        ],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("Please choose the section you want tips for:", reply_markup=reply_markup)
+
+
+# In bot_handlers.py
+
+async def info_section_callback(update: Update, context: CallbackContext) -> None:
+    """Parses the user's section choice and sends the AI-generated strategies."""
+    query = update.callback_query
+    await query.answer()
+
+    section = query.data.split('_')[1]
+
+    await query.edit_message_text(text=f"Great! Fetching top strategies for the {section.capitalize()} section...")
+
+    # Get the fully formatted message directly from the API
+    strategies_text = generate_ielts_strategies(section=section)
+    
+    # ✅ Send the AI's response directly. It already contains the title and formatting.
+    await query.edit_message_text(text=strategies_text, parse_mode='Markdown')
+
+async def start_grammar_explanation(update: Update, context: CallbackContext) -> int:
+    """Asks the user for a grammar topic."""
+    await update.message.reply_text(
+        "📖 What grammar topic would you like an explanation for?\n\n"
+        "For example: 'Present Perfect', 'using articles', or 'phrasal verbs'."
+    )
+    # Transition to the state where we wait for the topic
+    return GET_GRAMMAR_TOPIC
+
+
+async def get_grammar_topic(update: Update, context: CallbackContext) -> int:
+    """Fetches the grammar explanation from the AI and ends the conversation."""
+    grammar_topic = update.message.text
+    
+    await update.message.reply_text(f"Sure! Generating an explanation for '{grammar_topic}'...")
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+
+    # Call your Gemini API function
+    explanation = explain_grammar_structure(grammar_topic=grammar_topic)
+
+    await update.message.reply_text(explanation, parse_mode='MarkdownV2')
+    
+    # End the conversation
+    return ConversationHandler.END
+
+grammar_conversation_handler = ConversationHandler(
+    entry_points=[CommandHandler("grammar", start_grammar_explanation)],
+    states={
+        GET_GRAMMAR_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_grammar_topic)],
+    },
+    # You can reuse the 'cancel' function from your other conversation handler
+    fallbacks=[CommandHandler("cancel", cancel)],
+)
+
+writing_conversation_handler = ConversationHandler(
+    entry_points=[CommandHandler("writing", start_writing_task)],
+    states={
+        GET_WRITING_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_topic)],
+    },
+    fallbacks=[CommandHandler("cancel", cancel)],
+)

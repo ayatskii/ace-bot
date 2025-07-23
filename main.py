@@ -1,5 +1,5 @@
 import logging
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler
 
 import config 
 import bot_handlers
@@ -23,10 +23,12 @@ def main() -> None:
     application.add_handler(CommandHandler("start", bot_handlers.start_command))
     application.add_handler(CommandHandler("help", bot_handlers.help_command))
     application.add_handler(CommandHandler("vocabulary", bot_handlers.handle_vocabulary_command))
-    application.add_handler(CommandHandler("writing", bot_handlers.handle_writing_command))
+    application.add_handler(bot_handlers.writing_conversation_handler)
     application.add_handler(CommandHandler("speaking", bot_handlers.handle_speaking_command))
-    application.add_handler(CommandHandler("info", bot_handlers.handle_ielts_info_command))
-    application.add_handler(CommandHandler("grammar", bot_handlers.handle_grammar_command))
+    application.add_handler(CallbackQueryHandler(bot_handlers.speaking_part_callback, pattern="^speaking_part_"))
+    application.add_handler(CommandHandler("info", bot_handlers.handle_info_command))
+    application.add_handler(CallbackQueryHandler(bot_handlers.info_section_callback, pattern="^info_"))
+    application.add_handler(bot_handlers.grammar_conversation_handler)
 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot_handlers.handle_text_input))
     logger.info("🗣️ Registered conversational text handler.")
@@ -39,4 +41,4 @@ def main() -> None:
     logger.info("✅ Bot is up and running. Listening for messages...")
     
 if __name__ == '__main__':
-    main()    
+    main()     

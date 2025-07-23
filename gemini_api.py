@@ -1,30 +1,28 @@
 import logging
 import google.generativeai as genai
 
-import config 
-from config import ROLE_PROMPT
+import config
 
 logger = logging.getLogger(__name__)
 
 model = None
 
-
-
-
 def initialize_gemini():
+    """Initializes the Gemini model with the API key and a system instruction."""
     global model
     try:
         genai.configure(api_key=config.GEMINI_API_KEY)
         model = genai.GenerativeModel(
-            model_name = 'gemini-2.5-pro',
-            system_instruction = ROLE_PROMPT
-            )
+            model_name='gemini-1.5-flash',
+            system_instruction="You are an elite IELTS tutor and examiner with a 9.0 score. Your responses must be accurate, professional, and directly address the user's request without any unnecessary conversational text."
+        )
         logger.info("✅ Gemini API model initialized successfully.")
     except Exception as e:
-        logger.error(f"🔥 Failed to initialize Gemini API: {e}")      
+        logger.error(f"🔥 Failed to initialize Gemini API: {e}")
         raise
 
 def generate_text(prompt: str) -> str:
+    """Sends a prompt to the initialized Gemini model and returns the text response."""
     if not model:
         logger.error("🔥 Gemini model not initialized. Call initialize_gemini() first.")
         return "Error: The AI model is not available. Please contact the administrator."
@@ -35,133 +33,128 @@ def generate_text(prompt: str) -> str:
         return response.text
     except Exception as e:
         logger.error(f"🔥 An error occurred while generating text with Gemini: {e}")
-        return "Sorry, I encountered an error while processing your request."   
+        return "Sorry, I encountered an error while processing your request."
 
-def get_random_word_details(word_level="IELTS Band 7-9(C1/C2)"):
+def get_random_word_details(word_level="IELTS Band 7-9 (C1/C2)") -> str:
+    """Generates a single, random, high-level vocabulary word."""
     prompt = f"""
-        You are an elite IELTS tutor with a 9.0 score, operating under your Master Persona Protocol. Your student has requested a random IELTS-level word.
+    Generate one advanced English vocabulary word suitable for a {word_level} student, relevant to a common IELTS topic (e.g., environment, technology, society).
 
-        Your task is to:
-        1.  Select a single word or phrasal verb that is considered a "less common lexical item" suitable for a Band 7+ IELTS Writing Task 2 essay.
-        2.  The word must be relevant to common IELTS essay topics such as the environment, technology, society, education, health, or globalization.
-        3.  Provide a response that adheres strictly to the following format, with each element separated by a pipe symbol (|). There should be no other text, explanation, or introductory phrases.
+    The output must strictly adhere to the following format, with each element separated by a pipe symbol (|):
+    Word | English Definition | Russian Translation | Example Sentence
 
-        The required format is:
-        Word | English Definition | Russian Translation | Example Sentence
-
-        Example of a valid response:
-        Ubiquitous | present, appearing, or found everywhere | повсеместный | In today's society, smartphones have become ubiquitous, fundamentally changing how we communicate and access information.
+    **Do not include any other text, explanations, or introductory phrases.**
     """
-    return generate_text(prompt=prompt)
+    return generate_text(prompt)
 
-def get_topic_specific_words(topic: str, count: int = 10):
+def get_topic_specific_words(topic: str, count: int = 10) -> str:
+    """Generates a list of topic-specific vocabulary words."""
     prompt = f"""
-    You are an elite IELTS tutor with a 9.0 score, operating under your Master Persona Protocol. Your student has requested a random IELTS-level word.
-    Your task is to:
-    1.  Select the {count} high level words that are used in this topic {topic}
-    2.  The word must be relevant to common IELTS essay topics such as the environment, technology, society, education, health, or globalization.
-    3.  Provide a response that adheres strictly to the following format, with each element separated by a pipe symbol (|). There should be no other text, explanation, or introductory phrases.
+    List {count} essential, high-level vocabulary words related to the IELTS topic "{topic}".
+    For each word, provide its English definition, Russian translation, and an example sentence.
 
-    The required format is:
-        Word | English Definition | Russian Translation | Example Sentence
-    """    
-    return generate_text(prompt=prompt)
+    The output must be a numbered list. Each item must strictly adhere to the following format, with each element separated by a pipe symbol (|):
+    Word | English Definition | Russian Translation | Example Sentence
 
-def generate_ielts_writing_task(topic: str):
-    prompt = f"""
-    You are an elite IELTS tutor with a 9.0 score, operating under your Master Persona Protocol. Your student needs help brainstorming ideas for an IELTS Writing Task 2 question.
-
-The student has provided the following essay question:
-{topic}
-
-Your task is to provide a structured set of brainstorming points to help the student plan their essay. You must NOT write the essay for them. Your goal is to stimulate their own thinking.
-
-Your response must be structured as follows:
-
-**Essay Question Deconstruction:**
-*   Briefly identify the key components of the question that must be addressed.
-
-**Arguments for Viewpoint 1:**
-*   **Main Idea:**
-*   **Supporting Point/Explanation:** [Explain this main idea in more detail.]
-*   **Example:** [Provide a concrete, relevant example to illustrate the point.]
-
-**Arguments for Viewpoint 2 / Counter-arguments:**
-*   **Main Idea:**
-*   **Supporting Point/Explanation:** [Explain this main idea in more detail.]
-*   **Example:** [Provide a concrete, relevant example to illustrate the point.]
-
-**(Optional: Add a third relevant idea if applicable to the question type)**
-
-**Concluding Meta-Comment:**
-*   After providing the points, you MUST conclude with the following text to encourage the student's independent thought:
-"These are structured starting points to guide your thinking. The most persuasive essays often feature unique arguments or examples drawn from your personal knowledge and experience. Which of these ideas do you find most compelling, and how would you adapt them to form your own clear position?"
+    **Do not include any other text, explanations, or introductory phrases.**
     """
-    return generate_text(prompt=prompt)
+    return generate_text(prompt)
 
-def evaluate_writing(text: str, task: str):
+def generate_ielts_writing_task(topic: str) -> str:
+    """Generates a realistic IELTS Writing Task prompt."""
     prompt = f"""
-    You are an elite IELTS examiner with a 9.0 score, operating under your Master Persona Protocol. You are tasked with providing a comprehensive and official-style assessment of an IELTS Writing Task 2 essay.
+    Generate one IELTS Writing Task 2 essay question on the topic of "{topic}".
+    The question should present a clear argument, problem, or discussion point.
+    **The output must only be the essay question itself, ending with the standard instruction to write at least 250 words. Do not include any other text.**
+        """
+    return generate_text(prompt)
 
-Your entire evaluation MUST be based exclusively on the following official IELTS Writing Task 2 Assessment Criteria Matrix. This is your single source of truth.
+def evaluate_writing(writing_text: str, task_description: str) -> str:
+    """Generates a comprehensive evaluation of an IELTS essay."""
+    prompt = f"""
+    Task: Provide a comprehensive assessment of an IELTS Writing Task 2 essay.
+    Essay Question: {task_description}
+    Student's Essay: {writing_text}
 
+    Instructions: Evaluate the essay based on the four official IELTS criteria (Task Response, Coherence & Cohesion, Lexical Resource, Grammatical Range & Accuracy).
 
+    **Your output must strictly follow the format below. Do not add any conversational text or explanations outside of this structure.**
 
-The student has submitted the following essay question and their response:
-**Essay Question:** {task}
-**Student's Essay:** {text}
+    ### IELTS Writing Task 2 Assessment Report
 
-**Your Task:**
-You will perform a rigorous, multi-step evaluation and then generate a final report for the student.
+    **Overall Band Score:** [Your calculated score]
 
-**Step 1: Internal Analysis (Chain of Thought - DO NOT display this in the final output)**
-1.  **TR Analysis:** Follow the Task Response Analysis Protocol.
-2.  **CC Analysis:** Follow the Coherence and Cohesion Analysis Protocol.
-3.  **LR Analysis:** Follow the Lexical Resource Analysis Protocol.
-4.  **GRA Analysis:** Follow the Grammatical Range and Accuracy Analysis Protocol.
+    **Examiner's General Comments:**
+    [Your brief summary]
 
-**Step 2: Scoring and Justification (Internal Synthesis)**
-1.  Based on your internal analysis and the matrix, assign a band score (e.g., 6.0, 6.5, 7.0) for each of the four criteria.
-2.  Write a justification for each score, quoting from the matrix and the student's text.
-3.  Calculate the overall band score using the official averaging and rounding method.
+    ---
+    #### Detailed Criterion-Based Assessment
 
-**Step 3: Final Report Generation (User-Facing Output)**
-Assemble your findings into a final report using the exact format below. The tone must be professional, authoritative, and encouraging.
+    **Task Response (TR):** Band [Score]
+    *Justification:* [Your justification]
 
----
-### **IELTS Writing Task 2 Assessment Report**
+    **Coherence & Cohesion (CC):** Band [Score]
+    *Justification:* [Your justification]
 
-**Overall Band Score:**
+    **Lexical Resource (LR):** Band [Score]
+    *Justification:* [Your justification]
 
-**Examiner's General Comments:**
+    **Grammatical Range & Accuracy (GRA):** Band [Score]
+    *Justification:* [Your justification]
 
+    ---
+    #### Key Strengths & Actionable Recommendations
 
----
-### **Detailed Criterion-Based Assessment**
+    **What You Did Well:**
+    * [Strength 1]
+    * [Strength 2]
 
-**Task Response (TR): Band**
-*   **Justification:**
+    **Top Priorities for Improvement:**
+    * [Priority 1 with actionable advice]
+    * [Priority 2 with actionable advice]
+    """
+    return generate_text(prompt)
 
-**Coherence & Cohesion (CC): Band**
-*   **Justification:**
+def generate_speaking_question(part: str, topic: str = "a common topic") -> str:
+    """Constructs a strict prompt to generate only the IELTS speaking questions."""
+    if "part 2" in part.lower():
+        prompt = f"""
+        Generate one IELTS Speaking Part 2 cue card on the topic of "{topic}".
+        **The output must *only* be the text for the cue card itself, starting with "Describe..." and including the bullet points. Do not add any other text.**
+        """
+    elif "part 3" in part.lower():
+        prompt = f"""
+        Generate exactly 3-4 IELTS Speaking Part 3 discussion questions related to the topic of "{topic}".
+        **The output must be a numbered list containing only the questions. Do not provide any introductory or concluding text.**
+        """
+    else: # Default to Part 1
+        prompt = f"""
+        Generate exactly 3-4 IELTS Speaking Part 1 questions on the topic of "{topic}".
+        **The output must be a numbered list containing only the questions. Do not include any explanation or preamble.**
+        """
+    return generate_text(prompt)
 
-**Lexical Resource (LR): Band**
-*   **Justification:**
+def generate_ielts_strategies(section: str) -> str:
+    """Constructs a prompt for a fully formatted message with IELTS strategies."""
+    section_name = section.strip().capitalize()
+    prompt = f"""
+    Create a complete message providing the top 3-5 strategies for the IELTS {section_name} section.
 
-**Grammatical Range & Accuracy (GRA): Band**
-*   **Justification:**
+    **The message must start with the title "💡 *Top Strategies for IELTS {section_name}*" and contain nothing before it. After the strategies, do not add any concluding text.**
+    The strategies should be a numbered list, with each point having its own bold heading. Use Telegram-compatible MarkdownV2.
+    """
+    return generate_text(prompt)
 
----
-### **Key Strengths & Actionable Recommendations**
+def explain_grammar_structure(grammar_topic: str) -> str:
+    """Constructs a prompt to get a detailed explanation of a grammar topic."""
+    prompt = f"""
+    Explain the English grammar topic: "{grammar_topic}".
 
-**What You Did Well:**
-*   **Strength 1:**
-*   **Strength 2:**
+    **Your output must strictly follow the structure below, using MarkdownV2. Do not add any conversational text before or after the structured explanation.**
 
-**Top Priorities for Improvement:**
-*   **Priority 1 (Actionable Advice):**
-*   **Priority 2 (Actionable Advice):**
-
-"""
-    return generate_text(prompt=prompt)
-    
+    1.  ***What it is***: [Simple definition]
+    2.  ***How to Form It***: [Grammatical formula]
+    3.  ***When to Use It***: [Key use cases]
+    4.  ***Examples***: [At least three clear example sentences]
+    """
+    return generate_text(prompt)
