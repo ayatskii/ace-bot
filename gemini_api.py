@@ -11,9 +11,10 @@ def initialize_gemini():
     """Initializes the Gemini model with the API key and a system instruction."""
     global model
     try:
+        generation_config = {"temperature": 0.9}
         genai.configure(api_key=config.GEMINI_API_KEY)
         model = genai.GenerativeModel(
-            model_name='gemini-1.5-flash',
+            model_name='gemini-2.5-flash',
             system_instruction="You are an elite IELTS tutor and examiner with a 9.0 score. Your responses must be accurate, professional, and directly address the user's request without any unnecessary conversational text."
         )
         logger.info("✅ Gemini API model initialized successfully.")
@@ -60,13 +61,23 @@ def get_topic_specific_words(topic: str, count: int = 10) -> str:
     """
     return generate_text(prompt)
 
-def generate_ielts_writing_task(topic: str) -> str:
-    """Generates a realistic IELTS Writing Task prompt."""
-    prompt = f"""
-    Generate one IELTS Writing Task 2 essay question on the topic of "{topic}".
-    The question should present a clear argument, problem, or discussion point.
-    **The output must only be the essay question itself, ending with the standard instruction to write at least 250 words. Do not include any other text.**
+def generate_ielts_writing_task(task_type: str, topic: str) -> str:
+    """Generates a realistic IELTS Writing Task prompt with a strict format."""
+    if "task 1" in task_type.lower():
+        prompt = f"""
+        Generate one IELTS Academic Writing Task 1 prompt related to the topic of "{topic}".
+        The prompt must describe a visual data representation (like a chart, graph, or diagram).
+
+        **The output must only be the text prompt itself, starting with a description of the visual and ending with the standard instruction to summarize it. Do not include any other text.**
         """
+    else: # Default to Task 2
+        prompt = f"""
+        Generate one IELTS Writing Task 2 essay question on the topic of "{topic}".
+        The question should present a clear argument, problem, or discussion point.
+
+        **The output must only be the essay question itself, ending with the standard instruction to write at least 250 words. Do not include any other text.**
+        """
+    # Use the existing, working generate_text function
     return generate_text(prompt)
 
 def evaluate_writing(writing_text: str, task_description: str) -> str:
@@ -78,40 +89,40 @@ def evaluate_writing(writing_text: str, task_description: str) -> str:
 
     Instructions: Evaluate the essay based on the four official IELTS criteria (Task Response, Coherence & Cohesion, Lexical Resource, Grammatical Range & Accuracy).
 
-    **Your output must strictly follow the format below. Do not add any conversational text or explanations outside of this structure.**
+    **Your output must strictly follow the format below. Do not add any conversational text or explanations outside of this structure. Do not use any special characters like asterisks (*) or underscores (_) for formatting.**
 
-    ### IELTS Writing Task 2 Assessment Report
+    IELTS Writing Task 2 Assessment Report
 
-    **Overall Band Score:** [Your calculated score]
+    Overall Band Score: [Your calculated score]
 
-    **Examiner's General Comments:**
+    Examiner's General Comments:
     [Your brief summary]
 
     ---
-    #### Detailed Criterion-Based Assessment
+    Detailed Criterion-Based Assessment
 
-    **Task Response (TR):** Band [Score]
-    *Justification:* [Your justification]
+    Task Response (TR): Band [Score]
+    Justification: [Your justification]
 
-    **Coherence & Cohesion (CC):** Band [Score]
-    *Justification:* [Your justification]
+    Coherence & Cohesion (CC): Band [Score]
+    Justification: [Your justification]
 
-    **Lexical Resource (LR):** Band [Score]
-    *Justification:* [Your justification]
+    Lexical Resource (LR): Band [Score]
+    Justification: [Your justification]
 
-    **Grammatical Range & Accuracy (GRA):** Band [Score]
-    *Justification:* [Your justification]
+    Grammatical Range & Accuracy (GRA): Band [Score]
+    Justification: [Your justification]
 
     ---
-    #### Key Strengths & Actionable Recommendations
+    Key Strengths & Actionable Recommendations
 
-    **What You Did Well:**
-    * [Strength 1]
-    * [Strength 2]
+    What You Did Well:
+    - [Strength 1]
+    - [Strength 2]
 
-    **Top Priorities for Improvement:**
-    * [Priority 1 with actionable advice]
-    * [Priority 2 with actionable advice]
+    Top Priorities for Improvement:
+    - [Priority 1 with actionable advice]
+    - [Priority 2 with actionable advice]
     """
     return generate_text(prompt)
 
@@ -140,8 +151,14 @@ def generate_ielts_strategies(section: str) -> str:
     prompt = f"""
     Create a complete message providing the top 3-5 strategies for the IELTS {section_name} section.
 
-    **The message must start with the title "💡 *Top Strategies for IELTS {section_name}*" and contain nothing before it. After the strategies, do not add any concluding text.**
-    The strategies should be a numbered list, with each point having its own bold heading. Use Telegram-compatible MarkdownV2.
+    **The message must start with the title "💡 Top Strategies for IELTS {section_name}" and contain nothing before it. After the strategies, do not add any concluding text.**
+    The strategies should be a numbered list, with each point having its own heading. Use plain text formatting - do not use any special characters like asterisks (*) or underscores (_) for formatting.
+    
+    Format each strategy as:
+    1. Strategy Name
+    [Detailed explanation of the strategy]
+    
+    Keep the content informative and practical for IELTS preparation.
     """
     return generate_text(prompt)
 
@@ -150,11 +167,13 @@ def explain_grammar_structure(grammar_topic: str) -> str:
     prompt = f"""
     Explain the English grammar topic: "{grammar_topic}".
 
-    **Your output must strictly follow the structure below, using MarkdownV2. Do not add any conversational text before or after the structured explanation.**
+    **Your output must strictly follow the structure below, using plain text. Do not add any conversational text before or after the structured explanation. Do not use any special characters like asterisks (*) or underscores (_) for formatting.**
 
-    1.  ***What it is***: [Simple definition]
-    2.  ***How to Form It***: [Grammatical formula]
-    3.  ***When to Use It***: [Key use cases]
-    4.  ***Examples***: [At least three clear example sentences]
+    1. What it is: [Simple definition]
+    2. How to Form It: [Grammatical formula]
+    3. When to Use It: [Key use cases]
+    4. Examples: [At least three clear example sentences]
+    
+    Keep the explanation clear, concise, and practical for IELTS preparation.
     """
     return generate_text(prompt)
