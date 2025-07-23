@@ -21,12 +21,12 @@ def main():
     # --- Conversation Handlers (for multi-step interactions) ---
     application.add_handler(bot_handlers.writing_conversation_handler)
     application.add_handler(bot_handlers.grammar_conversation_handler)
+    application.add_handler(bot_handlers.vocabulary_conversation_handler)
     logger.info("✅ Conversation handlers registered.")
 
     # --- Standard Command Handlers ---
     application.add_handler(CommandHandler("start", bot_handlers.start_command))
     application.add_handler(CommandHandler("help", bot_handlers.help_command))
-    application.add_handler(CommandHandler("vocabulary", bot_handlers.handle_vocabulary_command))
     application.add_handler(CommandHandler("speaking", bot_handlers.handle_speaking_command))
     application.add_handler(CommandHandler("info", bot_handlers.handle_info_command))
     logger.info("✅ Command handlers registered.")
@@ -38,6 +38,7 @@ def main():
     
     # Handlers for "Regenerate" buttons
     application.add_handler(CallbackQueryHandler(bot_handlers.regenerate_vocabulary_callback, pattern=r'^regenerate_vocabulary$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.regenerate_topic_vocabulary_callback, pattern=r'^regenerate_topic_vocabulary$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.regenerate_writing_task_callback, pattern=r'^regenerate_writing_task$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.regenerate_speaking_callback, pattern=r'^regenerate_speaking_\d$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.regenerate_info_callback, pattern=r'^regenerate_info_'))

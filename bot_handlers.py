@@ -5,7 +5,8 @@ import re
 
 from gemini_api import (
     get_random_word_details, generate_ielts_writing_task, evaluate_writing,
-    generate_speaking_question, generate_ielts_strategies, explain_grammar_structure
+    generate_speaking_question, generate_ielts_strategies, explain_grammar_structure,
+    get_topic_specific_words
 )
 
 logger = logging.getLogger(__name__)
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 GET_WRITING_TOPIC = 1
 GET_WRITING_SUBMISSION = 2
 GET_GRAMMAR_TOPIC = 3
+GET_VOCABULARY_TOPIC = 4
 
 # --- Utility Functions ---
 def escape_markdown_v2(text: str) -> str:
@@ -51,14 +53,70 @@ async def start_command(update: Update, context: CallbackContext) -> None:
 
 async def help_command(update: Update, context: CallbackContext) -> None:
     help_text = ("Here are the commands you can use:\n\n"
-                 "🧠 /vocabulary - Get new vocabulary words.\n"
+                 "🧠 /vocabulary - Get vocabulary words (random or topic-specific).\n"
                  "✍️ /writing - Get an IELTS writing task.\n"
                  "🗣️ /speaking - Get an IELTS speaking card.\n"
-                 "ℹ️ /info - Get tips and strategies.\n"
+                 "ℹ️ /info - Get tips and strategies for specific task types.\n"
                  "📖 /grammar - Get an explanation of a grammar topic.")
     await update.message.reply_text(help_text)
 
-# --- VOCABULARY ---
+# --- VOCABULARY (Conversation) ---
+async def start_vocabulary_selection(update: Update, context: CallbackContext) -> int:
+    logger.info(f"🎯 Vocabulary command triggered by user {update.effective_user.id}")
+    keyboard = [
+        [InlineKeyboardButton("🎲 Random Word", callback_data="vocabulary_random")],
+        [InlineKeyboardButton("📚 Topic-Specific Words", callback_data="vocabulary_topic")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("📖 What type of vocabulary would you like?", reply_markup=reply_markup)
+    logger.info(f"✅ Vocabulary options sent to user {update.effective_user.id}, returning state {GET_VOCABULARY_TOPIC}")
+    return GET_VOCABULARY_TOPIC
+
+async def handle_vocabulary_choice_callback(update: Update, context: CallbackContext) -> int:
+    query = update.callback_query
+    await query.answer()
+    choice = query.data.split('_')[1]  # random or topic
+    
+    if choice == "random":
+        logger.info(f"🎯 User {update.effective_user.id} chose random vocabulary")
+        await query.edit_message_text("🎲 Generating a random word...")
+        await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+        word_details = get_random_word_details()
+        reply_markup = get_common_buttons(generate_again_callback="regenerate_vocabulary")
+        await send_or_edit_safe_text(update, context, word_details, reply_markup)
+        return ConversationHandler.END
+    else:  # topic
+        logger.info(f"🎯 User {update.effective_user.id} chose topic-specific vocabulary")
+        await query.edit_message_text("📚 Please enter a topic for vocabulary words (e.g., 'environment', 'technology', 'education'):")
+        return GET_VOCABULARY_TOPIC
+
+async def get_topic_and_generate_vocabulary(update: Update, context: CallbackContext) -> int:
+    topic = update.message.text
+    context.user_data['current_vocabulary_topic'] = topic
+    logger.info(f"🎯 Vocabulary: User {update.effective_user.id} requested topic-specific words for: '{topic}'")
+    
+    await update.message.reply_text(f"📚 Generating useful vocabulary words for '{topic}'...")
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    
+    vocabulary_words = get_topic_specific_words(topic=topic, count=10)
+    reply_markup = get_common_buttons(generate_again_callback="regenerate_topic_vocabulary")
+    await send_or_edit_safe_text(update, context, vocabulary_words, reply_markup)
+    logger.info(f"✅ Topic-specific vocabulary generated for user {update.effective_user.id}, ending conversation")
+    return ConversationHandler.END
+
+async def regenerate_topic_vocabulary_callback(update: Update, context: CallbackContext) -> int:
+    query = update.callback_query
+    await query.answer()
+    topic = context.user_data.get('current_vocabulary_topic', 'general')
+    await query.edit_message_text(text=f"🔄 Regenerating vocabulary for '{topic}'...", reply_markup=None)
+    await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+    
+    new_vocabulary_words = get_topic_specific_words(topic=topic, count=10)
+    reply_markup = get_common_buttons(generate_again_callback="regenerate_topic_vocabulary")
+    await send_or_edit_safe_text(update, context, new_vocabulary_words, reply_markup)
+    return ConversationHandler.END
+
+# --- VOCABULARY (Legacy - keeping for backward compatibility) ---
 async def handle_vocabulary_command(update: Update, context: CallbackContext) -> None:
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     word_details = get_random_word_details()
@@ -333,5 +391,18 @@ grammar_conversation_handler = ConversationHandler(
     },
     fallbacks=[CommandHandler("cancel", cancel)],
     name="grammar_conversation",
+    persistent=False
+)
+
+vocabulary_conversation_handler = ConversationHandler(
+    entry_points=[CommandHandler("vocabulary", start_vocabulary_selection)],
+    states={
+        GET_VOCABULARY_TOPIC: [
+            CallbackQueryHandler(handle_vocabulary_choice_callback, pattern=r'^vocabulary_(random|topic)$'),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_topic_and_generate_vocabulary)
+        ],
+    },
+    fallbacks=[CommandHandler("cancel", cancel)],
+    name="vocabulary_conversation",
     persistent=False
 )
