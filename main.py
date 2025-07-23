@@ -41,7 +41,6 @@ def main():
     application.add_handler(CallbackQueryHandler(bot_handlers.regenerate_writing_task_callback, pattern=r'^regenerate_writing_task$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.regenerate_speaking_callback, pattern=r'^regenerate_speaking_\d$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.regenerate_info_callback, pattern=r'^regenerate_info_'))
-    application.add_handler(CallbackQueryHandler(bot_handlers.regenerate_grammar_callback, pattern=r'^regenerate_grammar$'))
     logger.info("✅ Callback query handlers registered.")
 
     # --- Error Handler ---

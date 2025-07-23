@@ -53,7 +53,7 @@ def get_topic_specific_words(topic: str, count: int = 10) -> str:
     prompt = f"""
     List {count} essential, high-level vocabulary words related to the IELTS topic "{topic}".
     For each word, provide its English definition, Russian translation, and an example sentence.
-
+    
     The output must be a numbered list. Each item must strictly adhere to the following format, with each element separated by a pipe symbol (|):
     Word | English Definition | Russian Translation | Example Sentence
 

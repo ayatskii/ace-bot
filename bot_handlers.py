@@ -76,12 +76,14 @@ async def regenerate_vocabulary_callback(update: Update, context: CallbackContex
 
 # --- WRITING (Conversation) ---
 async def start_writing_task(update: Update, context: CallbackContext) -> int:
+    logger.info(f"🎯 Writing command triggered by user {update.effective_user.id}")
     keyboard = [
         [InlineKeyboardButton("Task 1 (Report/Letter)", callback_data="writing_task_type_1")],
         [InlineKeyboardButton("Task 2 (Essay)", callback_data="writing_task_type_2")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text("✍️ Which type of writing task do you need?", reply_markup=reply_markup)
+    logger.info(f"✅ Writing task options sent to user {update.effective_user.id}, returning state {GET_WRITING_TOPIC}")
     return GET_WRITING_TOPIC
 
 async def handle_writing_task_type_callback(update: Update, context: CallbackContext) -> int:
@@ -89,13 +91,16 @@ async def handle_writing_task_type_callback(update: Update, context: CallbackCon
     await query.answer()
     task_type_choice = query.data.split('_')[-1]
     context.user_data['selected_writing_task_type'] = f"Task {task_type_choice}"
+    logger.info(f"🎯 User {update.effective_user.id} selected writing task type: {context.user_data['selected_writing_task_type']}")
     await query.edit_message_text(f"✅ You chose {context.user_data['selected_writing_task_type']}. Now, please tell me the topic for your writing task.")
+    logger.info(f"✅ User {update.effective_user.id} needs to provide topic, staying in state {GET_WRITING_TOPIC}")
     return GET_WRITING_TOPIC
 
 async def get_topic_and_generate_writing(update: Update, context: CallbackContext) -> int:
     user_topic = update.message.text
     selected_task_type = context.user_data.get('selected_writing_task_type', 'Task 2')
     context.user_data['current_writing_topic'] = user_topic
+    logger.info(f"🎯 Writing: User {update.effective_user.id} provided topic: '{user_topic}' for {selected_task_type}")
     
     await update.message.reply_text(f"✅ Great! Generating a {selected_task_type} task on the topic: '{user_topic}'...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
@@ -107,6 +112,7 @@ async def get_topic_and_generate_writing(update: Update, context: CallbackContex
     message_text = (f"Here is your {selected_task_type}:\n\n{writing_task}\n\n"
                     "Please write your response and send it to me.")
     await send_or_edit_safe_text(update, context, message_text, reply_markup)
+    logger.info(f"✅ Writing task generated for user {update.effective_user.id}, moving to submission state")
     return GET_WRITING_SUBMISSION
 
 async def regenerate_writing_task_callback(update: Update, context: CallbackContext) -> int:
@@ -206,24 +212,28 @@ async def regenerate_info_callback(update: Update, context: CallbackContext) -> 
 
 # --- GRAMMAR (Conversation) ---
 async def start_grammar_explanation(update: Update, context: CallbackContext) -> int:
+    logger.info(f"🎯 Grammar command triggered by user {update.effective_user.id}")
     await update.message.reply_text(
         "📖 What grammar topic would you like an explanation for?\n\n"
         "For example: 'Present Perfect', 'using articles', or 'phrasal verbs'."
     )
+    logger.info(f"✅ Grammar prompt sent to user {update.effective_user.id}, returning state {GET_GRAMMAR_TOPIC}")
     return GET_GRAMMAR_TOPIC
 
 async def get_grammar_topic(update: Update, context: CallbackContext) -> int:
     grammar_topic = update.message.text
     context.user_data['current_grammar_topic'] = grammar_topic
+    logger.info(f"🎯 Grammar: User {update.effective_user.id} requested explanation for: '{grammar_topic}'")
     
     await update.message.reply_text(f"Sure! Generating an explanation for '{grammar_topic}'...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     explanation = explain_grammar_structure(grammar_topic=grammar_topic)
     reply_markup = get_common_buttons(generate_again_callback="regenerate_grammar")
     await send_or_edit_safe_text(update, context, explanation, reply_markup)
+    logger.info(f"✅ Grammar explanation generated for user {update.effective_user.id}, ending conversation")
     return ConversationHandler.END
 
-async def regenerate_grammar_callback(update: Update, context: CallbackContext) -> None:
+async def regenerate_grammar_callback(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
     await query.answer()
     grammar_topic = context.user_data.get('current_grammar_topic', 'general grammar')
@@ -232,6 +242,7 @@ async def regenerate_grammar_callback(update: Update, context: CallbackContext) 
     new_explanation = explain_grammar_structure(grammar_topic=grammar_topic)
     reply_markup = get_common_buttons(generate_again_callback="regenerate_grammar")
     await send_or_edit_safe_text(update, context, new_explanation, reply_markup)
+    return ConversationHandler.END
 
 # --- GLOBAL CANCEL & ERROR HANDLER ---
 async def cancel(update: Update, context: CallbackContext) -> int:
@@ -252,16 +263,24 @@ writing_conversation_handler = ConversationHandler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_topic_and_generate_writing)
         ],
         GET_WRITING_SUBMISSION: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_submission)
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_submission),
+            CallbackQueryHandler(regenerate_writing_task_callback, pattern=r'^regenerate_writing_task$')
         ],
     },
     fallbacks=[CommandHandler("cancel", cancel)],
+    name="writing_conversation",
+    persistent=False
 )
 
 grammar_conversation_handler = ConversationHandler(
     entry_points=[CommandHandler("grammar", start_grammar_explanation)],
     states={
-        GET_GRAMMAR_TOPIC: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_grammar_topic)],
+        GET_GRAMMAR_TOPIC: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, get_grammar_topic),
+            CallbackQueryHandler(regenerate_grammar_callback, pattern=r'^regenerate_grammar$')
+        ],
     },
     fallbacks=[CommandHandler("cancel", cancel)],
+    name="grammar_conversation",
+    persistent=False
 )
