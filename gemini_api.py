@@ -145,20 +145,37 @@ def generate_speaking_question(part: str, topic: str = "a common topic") -> str:
         """
     return generate_text(prompt)
 
-def generate_ielts_strategies(section: str) -> str:
+def generate_ielts_strategies(section: str, task_type: str = "general") -> str:
     """Constructs a prompt for a fully formatted message with IELTS strategies."""
     section_name = section.strip().capitalize()
+    
+    # Create task-specific prompts
+    task_prompts = {
+        # Listening task types
+        "truefalse": f"Create specific strategies for IELTS {section_name} True/False questions. Focus on identifying keywords, understanding synonyms, and recognizing when information is contradicted or not mentioned.",
+        "multiplechoice": f"Create specific strategies for IELTS {section_name} Multiple Choice questions. Focus on reading all options before listening, identifying distractors, and understanding the exact meaning of each option.",
+        "notes": f"Create specific strategies for IELTS {section_name} Note Completion tasks. Focus on predicting word types, listening for specific information, and understanding the structure of notes.",
+        
+        # Reading task types
+        "shortanswer": f"Create specific strategies for IELTS {section_name} Short Answer questions. Focus on scanning for keywords, understanding question types, and writing concise answers within word limits.",
+        "headings": f"Create specific strategies for IELTS {section_name} Matching Headings tasks. Focus on understanding main ideas, identifying topic sentences, and recognizing paragraph structure.",
+        "summary": f"Create specific strategies for IELTS {section_name} Summary Completion tasks. Focus on understanding context, predicting word types, and maintaining grammatical accuracy."
+    }
+    
+    # Get the specific prompt or use a general one
+    specific_prompt = task_prompts.get(task_type, f"Create general strategies for IELTS {section_name} section")
+    
     prompt = f"""
-    Create a complete message providing the top 3-5 strategies for the IELTS {section_name} section.
+    {specific_prompt}
 
-    **The message must start with the title "💡 Top Strategies for IELTS {section_name}" and contain nothing before it. After the strategies, do not add any concluding text.**
+    **The message must start with the title "💡 Top Strategies for IELTS {section_name} - {task_type.replace('_', ' ').title()}" and contain nothing before it. After the strategies, do not add any concluding text.**
     The strategies should be a numbered list, with each point having its own heading. Use plain text formatting - do not use any special characters like asterisks (*) or underscores (_) for formatting.
     
     Format each strategy as:
     1. Strategy Name
-    [Detailed explanation of the strategy]
+    [Detailed explanation of the strategy with specific tips for this task type]
     
-    Keep the content informative and practical for IELTS preparation.
+    Keep the content informative, practical, and specifically tailored for {task_type.replace('_', ' ')} tasks in IELTS {section_name}.
     """
     return generate_text(prompt)
 

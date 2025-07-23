@@ -183,31 +183,82 @@ async def regenerate_speaking_callback(update: Update, context: CallbackContext)
 # --- IELTS INFO ---
 async def handle_info_command(update: Update, context: CallbackContext) -> None:
     keyboard = [
-        [InlineKeyboardButton("🎧 Listening Strategies", callback_data="info_listening")],
-        [InlineKeyboardButton("📖 Reading Strategies", callback_data="info_reading")],
+        [InlineKeyboardButton("🎧 Listening - True/False", callback_data="info_listening_truefalse")],
+        [InlineKeyboardButton("🎧 Listening - Multiple Choice", callback_data="info_listening_multiplechoice")],
+        [InlineKeyboardButton("🎧 Listening - Note Completion", callback_data="info_listening_notes")],
+        [InlineKeyboardButton("📖 Reading - Short Answer", callback_data="info_reading_shortanswer")],
+        [InlineKeyboardButton("📖 Reading - True/False/NG", callback_data="info_reading_truefalse")],
+        [InlineKeyboardButton("📖 Reading - Multiple Choice", callback_data="info_reading_multiplechoice")],
+        [InlineKeyboardButton("📖 Reading - Matching Headings", callback_data="info_reading_headings")],
+        [InlineKeyboardButton("📖 Reading - Summary Completion", callback_data="info_reading_summary")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("ℹ️ Please choose the section you want tips for:", reply_markup=reply_markup)
+    await update.message.reply_text("ℹ️ Choose the specific IELTS task type you want strategies for:", reply_markup=reply_markup)
 
 async def info_section_callback(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
-    section = query.data.split('_')[1]
+    
+    # Extract section and task type from callback data
+    # Format: info_listening_truefalse -> section: listening, task_type: truefalse
+    callback_parts = query.data.split('_')
+    section = callback_parts[1]  # listening or reading
+    task_type = '_'.join(callback_parts[2:])  # truefalse, multiplechoice, etc.
+    
     context.user_data['current_info_section'] = section
-    await query.edit_message_text(text=f"Great! Fetching top strategies for the {section.capitalize()} section...")
+    context.user_data['current_info_task_type'] = task_type
+    
+    # Create a user-friendly task type name
+    task_type_names = {
+        'truefalse': 'True/False',
+        'multiplechoice': 'Multiple Choice',
+        'notes': 'Note Completion',
+        'shortanswer': 'Short Answer',
+        'headings': 'Matching Headings',
+        'summary': 'Summary Completion'
+    }
+    
+    task_name = task_type_names.get(task_type, task_type.replace('_', ' ').title())
+    section_name = section.capitalize()
+    
+    await query.edit_message_text(text=f"Great! Fetching strategies for {section_name} - {task_name}...")
     await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
-    strategies_text = generate_ielts_strategies(section=section)
-    reply_markup = get_common_buttons(generate_again_callback=f"regenerate_info_{section}")
+
+    strategies_text = generate_ielts_strategies(section=section, task_type=task_type)
+    reply_markup = get_common_buttons(generate_again_callback=f"regenerate_info_{section}_{task_type}")
     await send_or_edit_safe_text(update, context, strategies_text, reply_markup)
 
 async def regenerate_info_callback(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
-    section = context.user_data.get('current_info_section', query.data.split('_')[-1])
-    await query.edit_message_text(text=f"🔄 Regenerating strategies for {section.capitalize()} section...", reply_markup=None)
+    
+    # Extract section and task type from callback data or user_data
+    callback_parts = query.data.split('_')
+    if len(callback_parts) >= 4:  # regenerate_info_listening_truefalse
+        section = callback_parts[2]  # listening
+        task_type = '_'.join(callback_parts[3:])  # truefalse
+    else:  # fallback to user_data
+        section = context.user_data.get('current_info_section', 'listening')
+        task_type = context.user_data.get('current_info_task_type', 'general')
+    
+    # Create a user-friendly task type name
+    task_type_names = {
+        'truefalse': 'True/False',
+        'multiplechoice': 'Multiple Choice',
+        'notes': 'Note Completion',
+        'shortanswer': 'Short Answer',
+        'headings': 'Matching Headings',
+        'summary': 'Summary Completion'
+    }
+    
+    task_name = task_type_names.get(task_type, task_type.replace('_', ' ').title())
+    section_name = section.capitalize()
+
+    await query.edit_message_text(text=f"🔄 Regenerating strategies for {section_name} - {task_name}...", reply_markup=None)
     await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
-    new_strategies_text = generate_ielts_strategies(section=section)
-    reply_markup = get_common_buttons(generate_again_callback=f"regenerate_info_{section}")
+
+    new_strategies_text = generate_ielts_strategies(section=section, task_type=task_type)
+    reply_markup = get_common_buttons(generate_again_callback=f"regenerate_info_{section}_{task_type}")
     await send_or_edit_safe_text(update, context, new_strategies_text, reply_markup)
 
 # --- GRAMMAR (Conversation) ---
