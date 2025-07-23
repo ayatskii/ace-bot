@@ -41,10 +41,16 @@ def get_random_word_details(word_level="IELTS Band 7-9 (C1/C2)") -> str:
     prompt = f"""
     Generate one advanced English vocabulary word suitable for a {word_level} student, relevant to a common IELTS topic (e.g., environment, technology, society).
 
-    The output must strictly adhere to the following format, with each element separated by a pipe symbol (|):
-    Word | English Definition | Russian Translation | Example Sentence
+    **Your output must strictly follow this exact format with clear sections and proper spacing:**
 
-    **Do not include any other text, explanations, or introductory phrases.**
+    🎯 VOCABULARY WORD OF THE DAY
+
+    📝 Word: [the vocabulary word]
+    📖 Definition: [clear English definition]
+    🇷🇺 Translation: [Russian translation]
+    💡 Example: [example sentence showing proper usage]
+
+    **Do not include any other text, explanations, or introductory phrases. Use only the format above.**
     """
     return generate_text(prompt)
 
@@ -54,10 +60,24 @@ def get_topic_specific_words(topic: str, count: int = 10) -> str:
     List {count} essential, high-level vocabulary words related to the IELTS topic "{topic}".
     For each word, provide its English definition, Russian translation, and an example sentence.
     
-    The output must be a numbered list. Each item must strictly adhere to the following format, with each element separated by a pipe symbol (|):
-    Word | English Definition | Russian Translation | Example Sentence
+    **Your output must strictly follow this exact format with clear sections and proper spacing:**
 
-    **Do not include any other text, explanations, or introductory phrases.**
+    📚 ESSENTIAL VOCABULARY: {topic.upper()}
+
+    [For each word, use this format:]
+    1. 📝 [Word]
+       📖 Definition: [clear English definition]
+       🇷🇺 Translation: [Russian translation]
+       💡 Example: [example sentence showing proper usage]
+
+    2. 📝 [Word]
+       📖 Definition: [clear English definition]
+       🇷🇺 Translation: [Russian translation]
+       💡 Example: [example sentence showing proper usage]
+
+    [Continue this format for all {count} words]
+
+    **Do not include any other text, explanations, or introductory phrases. Use only the format above.**
     """
     return generate_text(prompt)
 
@@ -68,14 +88,37 @@ def generate_ielts_writing_task(task_type: str, topic: str) -> str:
         Generate one IELTS Academic Writing Task 1 prompt related to the topic of "{topic}".
         The prompt must describe a visual data representation (like a chart, graph, or diagram).
 
-        **The output must only be the text prompt itself, starting with a description of the visual and ending with the standard instruction to summarize it. Do not include any other text.**
+        **Your output must strictly follow this exact format:**
+
+        ✍️ IELTS WRITING TASK 1
+
+        📊 Task Description:
+        [Describe the visual data - chart, graph, or diagram related to {topic}]
+
+        📋 Instructions:
+        Summarize the information by selecting and reporting the main features, and make comparisons where relevant.
+
+        ⏰ Time: 20 minutes
+        📝 Word Count: At least 150 words
+
+        **Do not include any other text, explanations, or introductory phrases. Use only the format above.**
         """
     else: # Default to Task 2
         prompt = f"""
         Generate one IELTS Writing Task 2 essay question on the topic of "{topic}".
         The question should present a clear argument, problem, or discussion point.
 
-        **The output must only be the essay question itself, ending with the standard instruction to write at least 250 words. Do not include any other text.**
+        **Your output must strictly follow this exact format:**
+
+        ✍️ IELTS WRITING TASK 2
+
+        🤔 Essay Question:
+        [The essay question or statement related to {topic}]
+
+        📋 Instructions:
+        Write at least 250 words. You should spend about 40 minutes on this task.
+
+        **Do not include any other text, explanations, or introductory phrases. Use only the format above.**
         """
     # Use the existing, working generate_text function
     return generate_text(prompt)
@@ -89,40 +132,44 @@ def evaluate_writing(writing_text: str, task_description: str) -> str:
 
     Instructions: Evaluate the essay based on the four official IELTS criteria (Task Response, Coherence & Cohesion, Lexical Resource, Grammatical Range & Accuracy).
 
-    **Your output must strictly follow the format below. Do not add any conversational text or explanations outside of this structure. Do not use any special characters like asterisks (*) or underscores (_) for formatting.**
+    **Your output must strictly follow this exact format with clear sections and proper spacing:**
 
-    IELTS Writing Task 2 Assessment Report
+    📊 IELTS WRITING ASSESSMENT REPORT
 
-    Overall Band Score: [Your calculated score]
+    🎯 Overall Band Score: [Your calculated score]
 
-    Examiner's General Comments:
-    [Your brief summary]
+    📝 Examiner's General Comments:
+    [Your brief summary of the essay's overall performance]
 
-    ---
-    Detailed Criterion-Based Assessment
+    ────────────────────────────────────────
+    📋 DETAILED CRITERION-BASED ASSESSMENT
+    ────────────────────────────────────────
 
-    Task Response (TR): Band [Score]
-    Justification: [Your justification]
+    📌 Task Response (TR): Band [Score]
+    💬 Justification: [Your detailed justification]
 
-    Coherence & Cohesion (CC): Band [Score]
-    Justification: [Your justification]
+    📌 Coherence & Cohesion (CC): Band [Score]
+    💬 Justification: [Your detailed justification]
 
-    Lexical Resource (LR): Band [Score]
-    Justification: [Your justification]
+    📌 Lexical Resource (LR): Band [Score]
+    💬 Justification: [Your detailed justification]
 
-    Grammatical Range & Accuracy (GRA): Band [Score]
-    Justification: [Your justification]
+    📌 Grammatical Range & Accuracy (GRA): Band [Score]
+    💬 Justification: [Your detailed justification]
 
-    ---
-    Key Strengths & Actionable Recommendations
+    ────────────────────────────────────────
+    🎯 KEY STRENGTHS & ACTIONABLE RECOMMENDATIONS
+    ────────────────────────────────────────
 
-    What You Did Well:
-    - [Strength 1]
-    - [Strength 2]
+    ✅ What You Did Well:
+    • [Strength 1]
+    • [Strength 2]
 
-    Top Priorities for Improvement:
-    - [Priority 1 with actionable advice]
-    - [Priority 2 with actionable advice]
+    🔧 Top Priorities for Improvement:
+    • [Priority 1 with actionable advice]
+    • [Priority 2 with actionable advice]
+
+    **Do not add any other text, explanations, or concluding phrases. Use only the format above.**
     """
     return generate_text(prompt)
 
@@ -131,17 +178,72 @@ def generate_speaking_question(part: str, topic: str = "a common topic") -> str:
     if "part 2" in part.lower():
         prompt = f"""
         Generate one IELTS Speaking Part 2 cue card on the topic of "{topic}".
-        **The output must *only* be the text for the cue card itself, starting with "Describe..." and including the bullet points. Do not add any other text.**
+
+        **Your output must strictly follow this exact format:**
+
+        🗣️ IELTS SPEAKING PART 2
+
+        📋 Cue Card:
+        Describe [the topic related to {topic}]
+
+        You should say:
+        • [First bullet point]
+        • [Second bullet point]
+        • [Third bullet point]
+        • [Fourth bullet point]
+
+        And explain [what you should explain]
+
+        ⏰ Preparation Time: 1 minute
+        🎤 Speaking Time: 1-2 minutes
+
+        **Do not add any other text, explanations, or introductory phrases. Use only the format above.**
         """
     elif "part 3" in part.lower():
         prompt = f"""
         Generate exactly 3-4 IELTS Speaking Part 3 discussion questions related to the topic of "{topic}".
-        **The output must be a numbered list containing only the questions. Do not provide any introductory or concluding text.**
+
+        **Your output must strictly follow this exact format:**
+
+        🗣️ IELTS SPEAKING PART 3
+
+        💭 Discussion Questions:
+
+        1. [First discussion question related to {topic}]
+
+        2. [Second discussion question related to {topic}]
+
+        3. [Third discussion question related to {topic}]
+
+        4. [Fourth discussion question related to {topic}]
+
+        ⏰ Time: 4-5 minutes
+        🎯 Focus: In-depth discussion and analysis
+
+        **Do not provide any introductory or concluding text. Use only the format above.**
         """
     else: # Default to Part 1
         prompt = f"""
         Generate exactly 3-4 IELTS Speaking Part 1 questions on the topic of "{topic}".
-        **The output must be a numbered list containing only the questions. Do not include any explanation or preamble.**
+
+        **Your output must strictly follow this exact format:**
+
+        🗣️ IELTS SPEAKING PART 1
+
+        💬 Personal Questions:
+
+        1. [First personal question about {topic}]
+
+        2. [Second personal question about {topic}]
+
+        3. [Third personal question about {topic}]
+
+        4. [Fourth personal question about {topic}]
+
+        ⏰ Time: 4-5 minutes
+        🎯 Focus: Personal experiences and opinions
+
+        **Do not include any explanation or preamble. Use only the format above.**
         """
     return generate_text(prompt)
 
@@ -168,14 +270,30 @@ def generate_ielts_strategies(section: str, task_type: str = "general") -> str:
     prompt = f"""
     {specific_prompt}
 
-    **The message must start with the title "💡 Top Strategies for IELTS {section_name} - {task_type.replace('_', ' ').title()}" and contain nothing before it. After the strategies, do not add any concluding text.**
-    The strategies should be a numbered list, with each point having its own heading. Use plain text formatting - do not use any special characters like asterisks (*) or underscores (_) for formatting.
-    
-    Format each strategy as:
-    1. Strategy Name
-    [Detailed explanation of the strategy with specific tips for this task type]
-    
-    Keep the content informative, practical, and specifically tailored for {task_type.replace('_', ' ')} tasks in IELTS {section_name}.
+    **Your output must strictly follow this exact format with clear sections and proper spacing:**
+
+    💡 TOP STRATEGIES FOR IELTS {section_name.upper()} - {task_type.replace('_', ' ').upper()}
+
+    ────────────────────────────────────────
+    🎯 ESSENTIAL STRATEGIES
+    ────────────────────────────────────────
+
+    1. 📌 [Strategy Name]
+       💬 [Detailed explanation of the strategy with specific tips for this task type]
+
+    2. 📌 [Strategy Name]
+       💬 [Detailed explanation of the strategy with specific tips for this task type]
+
+    3. 📌 [Strategy Name]
+       💬 [Detailed explanation of the strategy with specific tips for this task type]
+
+    4. 📌 [Strategy Name]
+       💬 [Detailed explanation of the strategy with specific tips for this task type]
+
+    5. 📌 [Strategy Name]
+       💬 [Detailed explanation of the strategy with specific tips for this task type]
+
+    **Do not add any concluding text or additional explanations. Use only the format above.**
     """
     return generate_text(prompt)
 
@@ -184,13 +302,34 @@ def explain_grammar_structure(grammar_topic: str) -> str:
     prompt = f"""
     Explain the English grammar topic: "{grammar_topic}".
 
-    **Your output must strictly follow the structure below, using plain text. Do not add any conversational text before or after the structured explanation. Do not use any special characters like asterisks (*) or underscores (_) for formatting.**
+    **Your output must strictly follow this exact format with clear sections and proper spacing:**
 
-    1. What it is: [Simple definition]
-    2. How to Form It: [Grammatical formula]
-    3. When to Use It: [Key use cases]
-    4. Examples: [At least three clear example sentences]
-    
-    Keep the explanation clear, concise, and practical for IELTS preparation.
+    📖 GRAMMAR EXPLANATION: {grammar_topic.upper()}
+
+    ────────────────────────────────────────
+    📚 COMPREHENSIVE GUIDE
+    ────────────────────────────────────────
+
+    1. 📝 What it is:
+       💬 [Simple, clear definition of the grammar structure]
+
+    2. 🔧 How to Form It:
+       💬 [Grammatical formula and structure with examples]
+
+    3. 🎯 When to Use It:
+       💬 [Key use cases and situations where this grammar is appropriate]
+
+    4. 💡 Examples:
+       • [First clear example sentence]
+       • [Second clear example sentence]
+       • [Third clear example sentence]
+
+    ────────────────────────────────────────
+    ⚠️ Common Mistakes to Avoid:
+    ────────────────────────────────────────
+    • [Common mistake 1]
+    • [Common mistake 2]
+
+    **Keep the explanation clear, concise, and practical for IELTS preparation. Do not add any concluding text.**
     """
     return generate_text(prompt)
