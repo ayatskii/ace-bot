@@ -57,14 +57,42 @@ async def send_or_edit_safe_text(update: Update, context: CallbackContext, text:
         else:
             await update.message.reply_text(text=text, reply_markup=reply_markup)
 
-# --- Core Command Handlers ---
+async def setup_bot_menu_button(context: CallbackContext) -> None:
+    """Sets up the bot menu button with main commands"""
+    try:
+        from telegram import BotCommand
+        
+        commands = [
+            BotCommand("start", "Start the bot and get welcome message"),
+            BotCommand("menu", "Open the interactive main menu"),
+            BotCommand("help", "Show help information"),
+            BotCommand("vocabulary", "Get vocabulary words"),
+            BotCommand("writing", "Get IELTS writing tasks"),
+            BotCommand("speaking", "Get IELTS speaking questions"),
+            BotCommand("info", "Get IELTS strategies and tips"),
+            BotCommand("grammar", "Get grammar explanations"),
+        ]
+        
+        await context.bot.set_my_commands(commands)
+        logger.info("✅ Bot menu button commands set successfully.")
+    except Exception as e:
+        logger.error(f"🔥 Failed to set bot menu button: {e}")
+
 async def start_command(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     welcome_message = (f"👋 Hello, {user.first_name}!\n\nI am your IELTS preparation assistant...")
-    await update.message.reply_text(welcome_message)
+    
+    keyboard = [
+        [InlineKeyboardButton("📋 Menu", callback_data="menu_help")],
+        [InlineKeyboardButton("❓ Help", callback_data="help_button")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(welcome_message, reply_markup=reply_markup)
 
 async def help_command(update: Update, context: CallbackContext) -> None:
     help_text = ("Here are the commands you can use:\n\n"
+                 "📋 /menu - Open the interactive main menu\n"
                  "🧠 /vocabulary - Get vocabulary words (random or topic-specific).\n"
                  "✍️ /writing - Get an IELTS writing task.\n"
                  "🗣️ /speaking - Get an IELTS speaking card.\n"
@@ -115,6 +143,24 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
     else:
         chat_id = query.message.chat_id
         await context.bot.send_message(chat_id=chat_id, text="Unknown menu option.")
+
+async def handle_start_buttons(update: Update, context: CallbackContext) -> None:
+    """Handle buttons from the start command"""
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    
+    if data == "menu_help":
+        await menu_command(update, context, force_new_message=True)
+    elif data == "help_button":
+        help_text = ("Here are the commands you can use:\n\n"
+                     "📋 /menu - Open the interactive main menu\n"
+                     "🧠 /vocabulary - Get vocabulary words (random or topic-specific).\n"
+                     "✍️ /writing - Get an IELTS writing task.\n"
+                     "🗣️ /speaking - Get an IELTS speaking card.\n"
+                     "ℹ️ /info - Get tips and strategies for specific task types.\n"
+                     "📖 /grammar - Get an explanation of a grammar topic.")
+        await query.edit_message_text(help_text)
 
 # --- VOCABULARY (Conversation) ---
 async def start_vocabulary_selection(update: Update, context: CallbackContext, force_new_message=False) -> int:
