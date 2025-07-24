@@ -1,6 +1,6 @@
 # main.py
 from telegram import Update
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters
 import logging
 import config
 import bot_handlers
@@ -18,23 +18,32 @@ def main():
     initialize_gemini()
     application = Application.builder().token(config.TELEGRAM_BOT_TOKEN).build()
 
+    # --- Standard Command Handlers ---
+    application.add_handler(CommandHandler("start", bot_handlers.start_command))
+    application.add_handler(CommandHandler("help", bot_handlers.help_command))
+    application.add_handler(CommandHandler("menu", bot_handlers.menu_command))
+    application.add_handler(CommandHandler("speaking", bot_handlers.handle_speaking_command))
+    application.add_handler(CommandHandler("info", bot_handlers.handle_info_command))
+    logger.info("✅ Command handlers registered.")
+
+    # --- Global Text Input Handlers (for topic selection) ---
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot_handlers.handle_global_text_input))
+    logger.info("✅ Global text input handlers registered.")
+
     # --- Conversation Handlers (for multi-step interactions) ---
     application.add_handler(bot_handlers.writing_conversation_handler)
     application.add_handler(bot_handlers.grammar_conversation_handler)
     application.add_handler(bot_handlers.vocabulary_conversation_handler)
     logger.info("✅ Conversation handlers registered.")
 
-    # --- Standard Command Handlers ---
-    application.add_handler(CommandHandler("start", bot_handlers.start_command))
-    application.add_handler(CommandHandler("help", bot_handlers.help_command))
-    application.add_handler(CommandHandler("speaking", bot_handlers.handle_speaking_command))
-    application.add_handler(CommandHandler("info", bot_handlers.handle_info_command))
-    logger.info("✅ Command handlers registered.")
-
     # --- Callback Query Handlers (for all inline buttons) ---
     # Handlers for initial menu selections
     application.add_handler(CallbackQueryHandler(bot_handlers.speaking_part_callback, pattern=r'^speaking_part_\d$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.info_section_callback, pattern=r'^info_(listening|reading)_'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.menu_button_callback, pattern=r'^menu_'))
+    # Add global handlers for vocabulary and writing buttons
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_vocabulary_choice_callback, pattern=r'^vocabulary_(random|topic)$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_writing_task_type_callback, pattern=r'^writing_task_type_\d$'))
     
     # Handlers for "Regenerate" buttons
     application.add_handler(CallbackQueryHandler(bot_handlers.regenerate_vocabulary_callback, pattern=r'^regenerate_vocabulary$'))

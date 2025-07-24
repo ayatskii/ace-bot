@@ -60,19 +60,78 @@ async def help_command(update: Update, context: CallbackContext) -> None:
                  "📖 /grammar - Get an explanation of a grammar topic.")
     await update.message.reply_text(help_text)
 
+async def menu_command(update: Update, context: CallbackContext, force_new_message=False) -> None:
+    """Sends an interactive main menu with buttons for all main features."""
+    keyboard = [
+        [InlineKeyboardButton("🧠 Vocabulary", callback_data="menu_vocabulary")],
+        [InlineKeyboardButton("✍️ Writing", callback_data="menu_writing")],
+        [InlineKeyboardButton("🗣️ Speaking", callback_data="menu_speaking")],
+        [InlineKeyboardButton("ℹ️ Info", callback_data="menu_info")],
+        [InlineKeyboardButton("📖 Grammar", callback_data="menu_grammar")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    if force_new_message:
+        chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="📋 <b>Main Menu</b>\n\nChoose a section to begin:",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+    else:
+        await update.message.reply_text(
+            "📋 <b>Main Menu</b>\n\nChoose a section to begin:",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+
+async def menu_button_callback(update: Update, context: CallbackContext) -> None:
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    await query.edit_message_text("Loading...")
+    if data == "menu_vocabulary":
+        await start_vocabulary_selection(update, context, force_new_message=True)
+    elif data == "menu_writing":
+        await start_writing_task(update, context, force_new_message=True)
+    elif data == "menu_grammar":
+        await start_grammar_explanation(update, context, force_new_message=True)
+    elif data == "menu_speaking":
+        await handle_speaking_command(update, context, force_new_message=True)
+    elif data == "menu_info":
+        await handle_info_command(update, context, force_new_message=True)
+    else:
+        chat_id = query.message.chat_id
+        await context.bot.send_message(chat_id=chat_id, text="Unknown menu option.")
+
 # --- VOCABULARY (Conversation) ---
-async def start_vocabulary_selection(update: Update, context: CallbackContext) -> int:
+async def start_vocabulary_selection(update: Update, context: CallbackContext, force_new_message=False) -> int:
+    if force_new_message:
+        chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
+        keyboard = [
+            [InlineKeyboardButton("🎲 Random Word", callback_data="vocabulary_random")],
+            [InlineKeyboardButton("📚 Topic-Specific Words", callback_data="vocabulary_topic")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await context.bot.send_message(chat_id=chat_id, text="📖 What type of vocabulary would you like?", reply_markup=reply_markup)
+        return GET_VOCABULARY_TOPIC
+    if update.message:
+        target = update.message
+    elif update.callback_query:
+        target = update.callback_query.message
+    else:
+        return
     logger.info(f"🎯 Vocabulary command triggered by user {update.effective_user.id}")
     keyboard = [
         [InlineKeyboardButton("🎲 Random Word", callback_data="vocabulary_random")],
         [InlineKeyboardButton("📚 Topic-Specific Words", callback_data="vocabulary_topic")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("📖 What type of vocabulary would you like?", reply_markup=reply_markup)
+    await target.reply_text("📖 What type of vocabulary would you like?", reply_markup=reply_markup)
     logger.info(f"✅ Vocabulary options sent to user {update.effective_user.id}, returning state {GET_VOCABULARY_TOPIC}")
     return GET_VOCABULARY_TOPIC
 
-async def handle_vocabulary_choice_callback(update: Update, context: CallbackContext) -> int:
+async def handle_vocabulary_choice_callback(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
     choice = query.data.split('_')[1]  # random or topic
@@ -84,11 +143,11 @@ async def handle_vocabulary_choice_callback(update: Update, context: CallbackCon
         word_details = get_random_word_details()
         reply_markup = get_common_buttons(generate_again_callback="regenerate_vocabulary")
         await send_or_edit_safe_text(update, context, word_details, reply_markup)
-        return ConversationHandler.END
+        await menu_command(update, context, force_new_message=True)
     else:  # topic
         logger.info(f"🎯 User {update.effective_user.id} chose topic-specific vocabulary")
+        context.user_data['waiting_for_vocabulary_topic'] = True
         await query.edit_message_text("📚 Please enter a topic for vocabulary words (e.g., 'environment', 'technology', 'education'):")
-        return GET_VOCABULARY_TOPIC
 
 async def get_topic_and_generate_vocabulary(update: Update, context: CallbackContext) -> int:
     topic = update.message.text
@@ -102,6 +161,7 @@ async def get_topic_and_generate_vocabulary(update: Update, context: CallbackCon
     reply_markup = get_common_buttons(generate_again_callback="regenerate_topic_vocabulary")
     await send_or_edit_safe_text(update, context, vocabulary_words, reply_markup)
     logger.info(f"✅ Topic-specific vocabulary generated for user {update.effective_user.id}, ending conversation")
+    await menu_command(update, context, force_new_message=True)
     return ConversationHandler.END
 
 async def regenerate_topic_vocabulary_callback(update: Update, context: CallbackContext) -> int:
@@ -122,6 +182,7 @@ async def handle_vocabulary_command(update: Update, context: CallbackContext) ->
     word_details = get_random_word_details()
     reply_markup = get_common_buttons(generate_again_callback="regenerate_vocabulary")
     await send_or_edit_safe_text(update, context, word_details, reply_markup)
+    await menu_command(update, context, force_new_message=True)
 
 async def regenerate_vocabulary_callback(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -131,28 +192,79 @@ async def regenerate_vocabulary_callback(update: Update, context: CallbackContex
     word_details = get_random_word_details()
     reply_markup = get_common_buttons(generate_again_callback="regenerate_vocabulary")
     await send_or_edit_safe_text(update, context, word_details, reply_markup)
+    await menu_command(update, context, force_new_message=True)
+
+async def handle_vocabulary_topic_input(update: Update, context: CallbackContext) -> None:
+    """Handle vocabulary topic input from users, works globally"""
+    topic = update.message.text
+    context.user_data['current_vocabulary_topic'] = topic
+    logger.info(f"🎯 Vocabulary: User {update.effective_user.id} requested topic-specific words for: '{topic}'")
+    
+    await update.message.reply_text(f"📚 Generating useful vocabulary words for '{topic}'...")
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    
+    vocabulary_words = get_topic_specific_words(topic=topic, count=10)
+    reply_markup = get_common_buttons(generate_again_callback="regenerate_topic_vocabulary")
+    await send_or_edit_safe_text(update, context, vocabulary_words, reply_markup)
+    logger.info(f"✅ Topic-specific vocabulary generated for user {update.effective_user.id}")
+    await menu_command(update, context, force_new_message=True)
 
 # --- WRITING (Conversation) ---
-async def start_writing_task(update: Update, context: CallbackContext) -> int:
+async def start_writing_task(update: Update, context: CallbackContext, force_new_message=False) -> int:
+    if force_new_message:
+        chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
+        keyboard = [
+            [InlineKeyboardButton("Task 1 (Report/Letter)", callback_data="writing_task_type_1")],
+            [InlineKeyboardButton("Task 2 (Essay)", callback_data="writing_task_type_2")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await context.bot.send_message(chat_id=chat_id, text="✍️ Which type of writing task do you need?", reply_markup=reply_markup)
+        return GET_WRITING_TOPIC
+    if update.message:
+        target = update.message
+    elif update.callback_query:
+        target = update.callback_query.message
+    else:
+        return
     logger.info(f"🎯 Writing command triggered by user {update.effective_user.id}")
     keyboard = [
         [InlineKeyboardButton("Task 1 (Report/Letter)", callback_data="writing_task_type_1")],
         [InlineKeyboardButton("Task 2 (Essay)", callback_data="writing_task_type_2")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("✍️ Which type of writing task do you need?", reply_markup=reply_markup)
+    await target.reply_text("✍️ Which type of writing task do you need?", reply_markup=reply_markup)
     logger.info(f"✅ Writing task options sent to user {update.effective_user.id}, returning state {GET_WRITING_TOPIC}")
     return GET_WRITING_TOPIC
 
-async def handle_writing_task_type_callback(update: Update, context: CallbackContext) -> int:
+async def handle_writing_task_type_callback(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
     task_type_choice = query.data.split('_')[-1]
     context.user_data['selected_writing_task_type'] = f"Task {task_type_choice}"
+    context.user_data['waiting_for_writing_topic'] = True
     logger.info(f"🎯 User {update.effective_user.id} selected writing task type: {context.user_data['selected_writing_task_type']}")
     await query.edit_message_text(f"✅ You chose {context.user_data['selected_writing_task_type']}. Now, please tell me the topic for your writing task.")
     logger.info(f"✅ User {update.effective_user.id} needs to provide topic, staying in state {GET_WRITING_TOPIC}")
-    return GET_WRITING_TOPIC
+
+async def handle_writing_topic_input(update: Update, context: CallbackContext) -> None:
+    """Handle writing topic input from users, works globally"""
+    user_topic = update.message.text
+    selected_task_type = context.user_data.get('selected_writing_task_type', 'Task 2')
+    context.user_data['current_writing_topic'] = user_topic
+    logger.info(f"🎯 Writing: User {update.effective_user.id} provided topic: '{user_topic}' for {selected_task_type}")
+    
+    await update.message.reply_text(f"✅ Great! Generating a {selected_task_type} task on the topic: '{user_topic}'...")
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    
+    writing_task = generate_ielts_writing_task(task_type=selected_task_type, topic=user_topic)
+    context.user_data['current_writing_task_description'] = writing_task
+    
+    reply_markup = get_common_buttons(generate_again_callback="regenerate_writing_task")
+    message_text = (f"Here is your {selected_task_type}:\n\n{writing_task}\n\n"
+                    "Please write your response and send it to me.")
+    await send_or_edit_safe_text(update, context, message_text, reply_markup)
+    logger.info(f"✅ Writing task generated for user {update.effective_user.id}")
+    await menu_command(update, context, force_new_message=True)
 
 async def get_topic_and_generate_writing(update: Update, context: CallbackContext) -> int:
     user_topic = update.message.text
@@ -171,6 +283,7 @@ async def get_topic_and_generate_writing(update: Update, context: CallbackContex
                     "Please write your response and send it to me.")
     await send_or_edit_safe_text(update, context, message_text, reply_markup)
     logger.info(f"✅ Writing task generated for user {update.effective_user.id}, moving to submission state")
+    await menu_command(update, context, force_new_message=True)
     return GET_WRITING_SUBMISSION
 
 async def regenerate_writing_task_callback(update: Update, context: CallbackContext) -> int:
@@ -188,6 +301,7 @@ async def regenerate_writing_task_callback(update: Update, context: CallbackCont
     message_text = (f"Here is your new {selected_task_type}:\n\n{new_writing_task}\n\n"
                     "Please write your response and send it to me.")
     await send_or_edit_safe_text(update, context, message_text, reply_markup)
+    await menu_command(update, context, force_new_message=True)
     return GET_WRITING_SUBMISSION
 
 async def handle_writing_submission(update: Update, context: CallbackContext) -> int:
@@ -202,17 +316,34 @@ async def handle_writing_submission(update: Update, context: CallbackContext) ->
     await send_or_edit_safe_text(update, context, message_text)
     
     context.user_data.clear()
+    await menu_command(update, context, force_new_message=True)
     return ConversationHandler.END
 
 # --- SPEAKING ---
-async def handle_speaking_command(update: Update, context: CallbackContext) -> None:
+async def handle_speaking_command(update: Update, context: CallbackContext, force_new_message=False) -> None:
+    if force_new_message:
+        chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
+        keyboard = [
+            [InlineKeyboardButton("Part 1: Короткие вопросы", callback_data="speaking_part_1")],
+            [InlineKeyboardButton("Part 2: Карточка-монолог", callback_data="speaking_part_2")],
+            [InlineKeyboardButton("Part 3: Дискуссия", callback_data="speaking_part_3")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await context.bot.send_message(chat_id=chat_id, text="🗣️ Выберите часть устного экзамена для практики:", reply_markup=reply_markup)
+        return
+    if update.message:
+        target = update.message
+    elif update.callback_query:
+        target = update.callback_query.message
+    else:
+        return
     keyboard = [
         [InlineKeyboardButton("Part 1: Короткие вопросы", callback_data="speaking_part_1")],
         [InlineKeyboardButton("Part 2: Карточка-монолог", callback_data="speaking_part_2")],
         [InlineKeyboardButton("Part 3: Дискуссия", callback_data="speaking_part_3")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("🗣️ Выберите часть устного экзамена для практики:", reply_markup=reply_markup)
+    await target.reply_text("🗣️ Выберите часть устного экзамена для практики:", reply_markup=reply_markup)
 
 async def speaking_part_callback(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -226,6 +357,7 @@ async def speaking_part_callback(update: Update, context: CallbackContext) -> No
     speaking_prompt = generate_speaking_question(part=part_for_api)
     reply_markup = get_common_buttons(generate_again_callback=f"regenerate_speaking_{part_number_str}")
     await send_or_edit_safe_text(update, context, speaking_prompt, reply_markup)
+    await menu_command(update, context, force_new_message=True)
 
 async def regenerate_speaking_callback(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -239,7 +371,28 @@ async def regenerate_speaking_callback(update: Update, context: CallbackContext)
     await send_or_edit_safe_text(update, context, new_speaking_prompt, reply_markup)
 
 # --- IELTS INFO ---
-async def handle_info_command(update: Update, context: CallbackContext) -> None:
+async def handle_info_command(update: Update, context: CallbackContext, force_new_message=False) -> None:
+    if force_new_message:
+        chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
+        keyboard = [
+            [InlineKeyboardButton("🎧 Listening - True/False", callback_data="info_listening_truefalse")],
+            [InlineKeyboardButton("🎧 Listening - Multiple Choice", callback_data="info_listening_multiplechoice")],
+            [InlineKeyboardButton("🎧 Listening - Note Completion", callback_data="info_listening_notes")],
+            [InlineKeyboardButton("📖 Reading - Short Answer", callback_data="info_reading_shortanswer")],
+            [InlineKeyboardButton("📖 Reading - True/False/NG", callback_data="info_reading_truefalse")],
+            [InlineKeyboardButton("📖 Reading - Multiple Choice", callback_data="info_reading_multiplechoice")],
+            [InlineKeyboardButton("📖 Reading - Matching Headings", callback_data="info_reading_headings")],
+            [InlineKeyboardButton("📖 Reading - Summary Completion", callback_data="info_reading_summary")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await context.bot.send_message(chat_id=chat_id, text="ℹ️ Choose the specific IELTS task type you want strategies for:", reply_markup=reply_markup)
+        return
+    if update.message:
+        target = update.message
+    elif update.callback_query:
+        target = update.callback_query.message
+    else:
+        return
     keyboard = [
         [InlineKeyboardButton("🎧 Listening - True/False", callback_data="info_listening_truefalse")],
         [InlineKeyboardButton("🎧 Listening - Multiple Choice", callback_data="info_listening_multiplechoice")],
@@ -251,7 +404,7 @@ async def handle_info_command(update: Update, context: CallbackContext) -> None:
         [InlineKeyboardButton("📖 Reading - Summary Completion", callback_data="info_reading_summary")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("ℹ️ Choose the specific IELTS task type you want strategies for:", reply_markup=reply_markup)
+    await target.reply_text("ℹ️ Choose the specific IELTS task type you want strategies for:", reply_markup=reply_markup)
 
 async def info_section_callback(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -285,6 +438,7 @@ async def info_section_callback(update: Update, context: CallbackContext) -> Non
     strategies_text = generate_ielts_strategies(section=section, task_type=task_type)
     reply_markup = get_common_buttons(generate_again_callback=f"regenerate_info_{section}_{task_type}")
     await send_or_edit_safe_text(update, context, strategies_text, reply_markup)
+    await menu_command(update, context, force_new_message=True)
 
 async def regenerate_info_callback(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
@@ -320,9 +474,24 @@ async def regenerate_info_callback(update: Update, context: CallbackContext) -> 
     await send_or_edit_safe_text(update, context, new_strategies_text, reply_markup)
 
 # --- GRAMMAR (Conversation) ---
-async def start_grammar_explanation(update: Update, context: CallbackContext) -> int:
+async def start_grammar_explanation(update: Update, context: CallbackContext, force_new_message=False) -> int:
+    if force_new_message:
+        chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
+        context.user_data['waiting_for_grammar_topic'] = True
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text="📖 What grammar topic would you like an explanation for?\n\nFor example: 'Present Perfect', 'using articles', or 'phrasal verbs'."
+        )
+        return GET_GRAMMAR_TOPIC
+    if update.message:
+        target = update.message
+    elif update.callback_query:
+        target = update.callback_query.message
+    else:
+        return
     logger.info(f"🎯 Grammar command triggered by user {update.effective_user.id}")
-    await update.message.reply_text(
+    context.user_data['waiting_for_grammar_topic'] = True
+    await target.reply_text(
         "📖 What grammar topic would you like an explanation for?\n\n"
         "For example: 'Present Perfect', 'using articles', or 'phrasal verbs'."
     )
@@ -340,7 +509,22 @@ async def get_grammar_topic(update: Update, context: CallbackContext) -> int:
     reply_markup = get_common_buttons(generate_again_callback="regenerate_grammar")
     await send_or_edit_safe_text(update, context, explanation, reply_markup)
     logger.info(f"✅ Grammar explanation generated for user {update.effective_user.id}, ending conversation")
+    await menu_command(update, context, force_new_message=True)
     return ConversationHandler.END
+
+async def handle_grammar_topic_input(update: Update, context: CallbackContext) -> None:
+    """Handle grammar topic input from users, works globally"""
+    grammar_topic = update.message.text
+    context.user_data['current_grammar_topic'] = grammar_topic
+    logger.info(f"🎯 Grammar: User {update.effective_user.id} requested explanation for: '{grammar_topic}'")
+    
+    await update.message.reply_text(f"Sure! Generating an explanation for '{grammar_topic}'...")
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    explanation = explain_grammar_structure(grammar_topic=grammar_topic)
+    reply_markup = get_common_buttons(generate_again_callback="regenerate_grammar")
+    await send_or_edit_safe_text(update, context, explanation, reply_markup)
+    logger.info(f"✅ Grammar explanation generated for user {update.effective_user.id}")
+    await menu_command(update, context, force_new_message=True)
 
 async def regenerate_grammar_callback(update: Update, context: CallbackContext) -> int:
     query = update.callback_query
@@ -352,6 +536,31 @@ async def regenerate_grammar_callback(update: Update, context: CallbackContext) 
     reply_markup = get_common_buttons(generate_again_callback="regenerate_grammar")
     await send_or_edit_safe_text(update, context, new_explanation, reply_markup)
     return ConversationHandler.END
+
+async def handle_global_text_input(update: Update, context: CallbackContext) -> None:
+    """Handle text input globally for vocabulary, grammar, and writing topics"""
+    text = update.message.text
+    
+    # Check if user is in vocabulary topic selection mode
+    if context.user_data.get('waiting_for_vocabulary_topic'):
+        context.user_data.pop('waiting_for_vocabulary_topic', None)
+        await handle_vocabulary_topic_input(update, context)
+        return
+    
+    # Check if user is in grammar topic selection mode  
+    if context.user_data.get('waiting_for_grammar_topic'):
+        context.user_data.pop('waiting_for_grammar_topic', None)
+        await handle_grammar_topic_input(update, context)
+        return
+    
+    # Check if user is in writing topic selection mode
+    if context.user_data.get('waiting_for_writing_topic'):
+        context.user_data.pop('waiting_for_writing_topic', None)
+        await handle_writing_topic_input(update, context)
+        return
+    
+    # If not in any specific mode, ignore the text
+    return
 
 # --- GLOBAL CANCEL & ERROR HANDLER ---
 async def cancel(update: Update, context: CallbackContext) -> int:
