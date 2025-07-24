@@ -44,6 +44,7 @@ def main():
     # Add global handlers for vocabulary and writing buttons
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_vocabulary_choice_callback, pattern=r'^vocabulary_(random|topic)$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_writing_task_type_callback, pattern=r'^writing_task_type_\d$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_writing_check_callback, pattern=r'^writing_check$'))
     
     # Handlers for "Regenerate" buttons
     application.add_handler(CallbackQueryHandler(bot_handlers.regenerate_vocabulary_callback, pattern=r'^regenerate_vocabulary$'))

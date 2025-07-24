@@ -6,10 +6,11 @@ import config
 logger = logging.getLogger(__name__)
 
 model = None
+writing_model = None
 
 def initialize_gemini():
     """Initializes the Gemini model with the API key and a system instruction."""
-    global model
+    global model, writing_model
     try:
         generation_config = {"temperature": 0.9}
         genai.configure(api_key=config.GEMINI_API_KEY)
@@ -17,7 +18,11 @@ def initialize_gemini():
             model_name='gemini-2.5-flash',
             system_instruction="You are an elite IELTS tutor and examiner with a 9.0 score. Your responses must be accurate, professional, and directly address the user's request without any unnecessary conversational text."
         )
-        logger.info("✅ Gemini API model initialized successfully.")
+        writing_model = genai.GenerativeModel(
+            model_name='gemini-2.5-pro',
+            system_instruction="You are an elite IELTS tutor and examiner with a 9.0 score. Your responses must be accurate, professional, and directly address the user's request without any unnecessary conversational text."
+        )
+        logger.info("✅ Gemini API models initialized successfully.")
     except Exception as e:
         logger.error(f"🔥 Failed to initialize Gemini API: {e}")
         raise
@@ -35,6 +40,20 @@ def generate_text(prompt: str) -> str:
     except Exception as e:
         logger.error(f"🔥 An error occurred while generating text with Gemini: {e}")
         return "Sorry, I encountered an error while processing your request."
+
+def generate_writing_text(prompt: str) -> str:
+    """Sends a prompt to the writing-specific Gemini model and returns the text response."""
+    if not writing_model:
+        logger.error("🔥 Writing Gemini model not initialized. Call initialize_gemini() first.")
+        return "Error: The AI model is not available. Please contact the administrator."
+
+    try:
+        logger.info(f"➡️ Sending writing prompt to Gemini Pro: '{prompt[:80]}...'")
+        response = writing_model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        logger.error(f"🔥 An error occurred while generating writing text with Gemini Pro: {e}")
+        return "Sorry, I encountered an error while processing your writing evaluation."
 
 def get_random_word_details(word_level="IELTS Band 7-9 (C1/C2)") -> str:
     """Generates a single, random, high-level vocabulary word."""
@@ -171,7 +190,7 @@ def evaluate_writing(writing_text: str, task_description: str) -> str:
 
     **Do not add any other text, explanations, or concluding phrases. Use only the format above.**
     """
-    return generate_text(prompt)
+    return generate_writing_text(prompt)
 
 def generate_speaking_question(part: str, topic: str = "a common topic") -> str:
     """Constructs a strict prompt to generate only the IELTS speaking questions."""

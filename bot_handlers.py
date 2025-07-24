@@ -21,8 +21,20 @@ GET_VOCABULARY_TOPIC = 4
 def escape_markdown_v2(text: str) -> str:
     """Escapes all special characters for Telegram's MarkdownV2 parse mode."""
     if not text: return ""
+    
+    # First, escape all special characters that need escaping in MarkdownV2
     escape_chars = r'_*[]()~`>#+-=|{}.!'
-    return re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
+    escaped_text = re.sub(f'([{re.escape(escape_chars)}])', r'\\\1', text)
+    
+    # Handle specific cases that might cause issues
+    # Replace any remaining ** with escaped asterisks
+    escaped_text = escaped_text.replace('**', '\\*\\*')
+    
+    # Handle any other potential formatting issues
+    # Replace any unescaped asterisks that might be used for emphasis
+    escaped_text = re.sub(r'(?<!\\)\*(?!\*)', r'\\*', escaped_text)
+    
+    return escaped_text
 
 def get_common_buttons(generate_again_callback: str = None) -> InlineKeyboardMarkup:
     """Generates an InlineKeyboardMarkup with an optional 'Generate Again' button."""
@@ -214,8 +226,8 @@ async def start_writing_task(update: Update, context: CallbackContext, force_new
     if force_new_message:
         chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
         keyboard = [
-            [InlineKeyboardButton("Task 1 (Report/Letter)", callback_data="writing_task_type_1")],
             [InlineKeyboardButton("Task 2 (Essay)", callback_data="writing_task_type_2")],
+            [InlineKeyboardButton("📝 Check Writing", callback_data="writing_check")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await context.bot.send_message(chat_id=chat_id, text="✍️ Which type of writing task do you need?", reply_markup=reply_markup)
@@ -228,8 +240,8 @@ async def start_writing_task(update: Update, context: CallbackContext, force_new
         return
     logger.info(f"🎯 Writing command triggered by user {update.effective_user.id}")
     keyboard = [
-        [InlineKeyboardButton("Task 1 (Report/Letter)", callback_data="writing_task_type_1")],
         [InlineKeyboardButton("Task 2 (Essay)", callback_data="writing_task_type_2")],
+        [InlineKeyboardButton("📝 Check Writing", callback_data="writing_check")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await target.reply_text("✍️ Which type of writing task do you need?", reply_markup=reply_markup)
@@ -318,6 +330,13 @@ async def handle_writing_submission(update: Update, context: CallbackContext) ->
     context.user_data.clear()
     await menu_command(update, context, force_new_message=True)
     return ConversationHandler.END
+
+async def handle_writing_check_callback(update: Update, context: CallbackContext) -> None:
+    """Handle the 'Check Writing' button press"""
+    query = update.callback_query
+    await query.answer()
+    context.user_data['waiting_for_writing_check'] = True
+    await query.edit_message_text("📝 Please paste your writing that you want me to check and evaluate.")
 
 # --- SPEAKING ---
 async def handle_speaking_command(update: Update, context: CallbackContext, force_new_message=False) -> None:
@@ -506,8 +525,15 @@ async def get_grammar_topic(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text(f"Sure! Generating an explanation for '{grammar_topic}'...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     explanation = explain_grammar_structure(grammar_topic=grammar_topic)
+    
+    # Format the explanation with escape_markdown_v2
+    formatted_explanation = escape_markdown_v2(explanation)
     reply_markup = get_common_buttons(generate_again_callback="regenerate_grammar")
-    await send_or_edit_safe_text(update, context, explanation, reply_markup)
+    await update.message.reply_text(
+        text=formatted_explanation,
+        parse_mode='MarkdownV2',
+        reply_markup=reply_markup
+    )
     logger.info(f"✅ Grammar explanation generated for user {update.effective_user.id}, ending conversation")
     await menu_command(update, context, force_new_message=True)
     return ConversationHandler.END
@@ -521,8 +547,15 @@ async def handle_grammar_topic_input(update: Update, context: CallbackContext) -
     await update.message.reply_text(f"Sure! Generating an explanation for '{grammar_topic}'...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     explanation = explain_grammar_structure(grammar_topic=grammar_topic)
+    
+    # Format the explanation with escape_markdown_v2
+    formatted_explanation = escape_markdown_v2(explanation)
     reply_markup = get_common_buttons(generate_again_callback="regenerate_grammar")
-    await send_or_edit_safe_text(update, context, explanation, reply_markup)
+    await update.message.reply_text(
+        text=formatted_explanation,
+        parse_mode='MarkdownV2',
+        reply_markup=reply_markup
+    )
     logger.info(f"✅ Grammar explanation generated for user {update.effective_user.id}")
     await menu_command(update, context, force_new_message=True)
 
@@ -533,9 +566,38 @@ async def regenerate_grammar_callback(update: Update, context: CallbackContext) 
     await query.edit_message_text(text=f"🔄 Regenerating explanation for '{grammar_topic}'...", reply_markup=None)
     await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
     new_explanation = explain_grammar_structure(grammar_topic=grammar_topic)
+    
+    # Format the explanation with escape_markdown_v2
+    formatted_explanation = escape_markdown_v2(new_explanation)
     reply_markup = get_common_buttons(generate_again_callback="regenerate_grammar")
-    await send_or_edit_safe_text(update, context, new_explanation, reply_markup)
+    await query.edit_message_text(
+        text=formatted_explanation,
+        parse_mode='MarkdownV2',
+        reply_markup=reply_markup
+    )
+    await menu_command(update, context, force_new_message=True)
     return ConversationHandler.END
+
+async def handle_writing_check_input(update: Update, context: CallbackContext) -> None:
+    """Handle writing check input from users"""
+    writing_text = update.message.text
+    logger.info(f"🎯 Writing Check: User {update.effective_user.id} submitted writing for evaluation")
+    
+    await update.message.reply_text("📝 Checking your writing, please wait...")
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    
+    # Use a generic task description for evaluation
+    task_description = "IELTS Writing Task - General Evaluation"
+    feedback = evaluate_writing(writing_text=writing_text, task_description=task_description)
+    
+    # Format the feedback with escape_markdown_v2
+    formatted_feedback = escape_markdown_v2(feedback)
+    await update.message.reply_text(
+        text=formatted_feedback,
+        parse_mode='MarkdownV2'
+    )
+    logger.info(f"✅ Writing evaluation completed for user {update.effective_user.id}")
+    await menu_command(update, context, force_new_message=True)
 
 async def handle_global_text_input(update: Update, context: CallbackContext) -> None:
     """Handle text input globally for vocabulary, grammar, and writing topics"""
@@ -557,6 +619,12 @@ async def handle_global_text_input(update: Update, context: CallbackContext) -> 
     if context.user_data.get('waiting_for_writing_topic'):
         context.user_data.pop('waiting_for_writing_topic', None)
         await handle_writing_topic_input(update, context)
+        return
+    
+    # Check if user is in writing check mode
+    if context.user_data.get('waiting_for_writing_check'):
+        context.user_data.pop('waiting_for_writing_check', None)
+        await handle_writing_check_input(update, context)
         return
     
     # If not in any specific mode, ignore the text
