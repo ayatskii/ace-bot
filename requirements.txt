@@ -1,0 +1,11 @@
+# Telegram Bot API
+python-telegram-bot==20.7
+
+# Google Generative AI (Gemini API)
+google-generativeai==0.3.2
+
+# Environment variables management
+python-dotenv==1.0.0
+
+# Standard library dependencies (included with Python)
+# logging, time, hashlib, random, os, re - no additional installation needed 
