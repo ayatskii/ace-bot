@@ -2,6 +2,7 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackContext, ConversationHandler, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 import logging
 import re
+import config
 
 from gemini_api import (
     get_random_word_details, generate_ielts_writing_task, evaluate_writing,
@@ -17,7 +18,95 @@ GET_WRITING_SUBMISSION = 2
 GET_GRAMMAR_TOPIC = 3
 GET_VOCABULARY_TOPIC = 4
 
+# --- Whitelist Helper Function ---
+def is_user_authorized(user) -> bool:
+    """Check if a user is authorized by ID or username."""
+    if not config.ENABLE_WHITELIST:
+        return True
+    
+    user_id = user.id
+    username = user.username
+    
+    return (
+        user_id in config.AUTHORIZED_USER_IDS or 
+        (username and username in config.AUTHORIZED_USERNAMES)
+    )
+
+# --- Whitelist Decorator ---
+def whitelist_only(func):
+    """Decorator to restrict access to whitelisted users only."""
+    async def wrapper(update: Update, context: CallbackContext, *args, **kwargs):
+        user = update.effective_user
+        
+        # Check if user is authorized
+        if is_user_authorized(user):
+            return await func(update, context, *args, **kwargs)
+        else:
+            logger.warning(f"Unauthorized access attempt by user {user.id} (@{user.username})")
+            await update.message.reply_text(
+                "🚫 **Access Denied**\n\n"
+                "You are not authorized to use this bot. "
+                "Please contact the administrator to get access.",
+                parse_mode='Markdown'
+            )
+            return
+    
+    return wrapper
+
 # --- Utility Functions ---
+def format_info_text(text: str) -> str:
+    """Formats info/strategies text for better mobile display."""
+    if not text: return ""
+    
+    # Convert common Markdown patterns to HTML
+    formatted_text = text
+    
+    # Convert **bold** to <b>bold</b>
+    formatted_text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', formatted_text)
+    
+    # Convert *italic* to <i>italic</i>
+    formatted_text = re.sub(r'\*([^*\n]+?)\*', r'<i>\1</i>', formatted_text)
+    
+    # Replace problematic characters for mobile display
+    # Replace long dashes with shorter ones for better mobile compatibility
+    formatted_text = formatted_text.replace('─', '-')
+    formatted_text = formatted_text.replace('━', '-')
+    formatted_text = formatted_text.replace('═', '=')
+    
+    # Convert bullet points to HTML bullets
+    formatted_text = formatted_text.replace('•', '•')
+    
+    # Keep line breaks as \n (Telegram HTML mode doesn't support <br>)
+    # Don't convert \n to <br> - Telegram will handle line breaks automatically
+    
+    return formatted_text
+
+def format_grammar_text(text: str) -> str:
+    """Formats grammar text using HTML to avoid MarkdownV2 escaping issues."""
+    if not text: return ""
+    
+    # Convert common Markdown patterns to HTML
+    formatted_text = text
+    
+    # Convert **bold** to <b>bold</b> (but be more careful with Russian text)
+    formatted_text = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', formatted_text)
+    
+    # Convert *italic* to <i>italic</i> (but be very careful with Russian text)
+    # First, protect bullet points by replacing them temporarily
+    formatted_text = formatted_text.replace('•', '___BULLET___')
+    
+    # Only convert asterisks that are clearly meant for emphasis (not part of formatting)
+    # Look for patterns like *word* but avoid * at the beginning of lines or after spaces
+    formatted_text = re.sub(r'(?<!\s)\*([^*\n]+?)\*(?!\*)', r'<i>\1</i>', formatted_text)
+    
+    # Restore bullet points
+    formatted_text = formatted_text.replace('___BULLET___', '•')
+    
+    # Keep line breaks as \n (Telegram HTML mode doesn't support <br>)
+    # Don't convert \n to <br> - Telegram will handle line breaks automatically
+    
+    return formatted_text
+
 def escape_markdown_v2(text: str) -> str:
     """Escapes all special characters for Telegram's MarkdownV2 parse mode."""
     if not text: return ""
@@ -39,7 +128,7 @@ def escape_markdown_v2(text: str) -> str:
 def get_common_buttons(generate_again_callback: str = None) -> InlineKeyboardMarkup:
     """Generates an InlineKeyboardMarkup with an optional 'Generate Again' button."""
     if not generate_again_callback: return None
-    keyboard = [[InlineKeyboardButton("🔄 Generate Again", callback_data=generate_again_callback)]]
+    keyboard = [[InlineKeyboardButton("🔄 Генерировать снова", callback_data=generate_again_callback)]]
     return InlineKeyboardMarkup(keyboard)
 
 async def send_or_edit_safe_text(update: Update, context: CallbackContext, text: str, reply_markup: InlineKeyboardMarkup = None):
@@ -78,54 +167,66 @@ async def setup_bot_menu_button(context: CallbackContext) -> None:
     except Exception as e:
         logger.error(f"🔥 Failed to set bot menu button: {e}")
 
+@whitelist_only
 async def start_command(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
-    welcome_message = (f"👋 Hello, {user.first_name}!\n\nI am your IELTS preparation assistant...")
+    welcome_message = (f"👋 Привет, {user.first_name}!\n\nЯ ваш помощник по подготовке к IELTS...")
     
     keyboard = [
-        [InlineKeyboardButton("📋 Menu", callback_data="menu_help")],
-        [InlineKeyboardButton("❓ Help", callback_data="help_button")],
+        [InlineKeyboardButton("📋 Меню", callback_data="menu_help")],
+        [InlineKeyboardButton("❓ Помощь", callback_data="help_button")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(welcome_message, reply_markup=reply_markup)
 
+@whitelist_only
 async def help_command(update: Update, context: CallbackContext) -> None:
-    help_text = ("Here are the commands you can use:\n\n"
-                 "📋 /menu - Open the interactive main menu\n"
-                 "🧠 /vocabulary - Get vocabulary words (random or topic-specific).\n"
-                 "✍️ /writing - Get an IELTS writing task.\n"
-                 "🗣️ /speaking - Get an IELTS speaking card.\n"
-                 "ℹ️ /info - Get tips and strategies for specific task types.\n"
-                 "📖 /grammar - Get an explanation of a grammar topic.")
+    help_text = ("Вот команды, которые вы можете использовать:\n\n"
+                 "📋 /menu - Открыть интерактивное главное меню\n"
+                 "🧠 /vocabulary - Получить словарные слова (случайные или по теме).\n"
+                 "✍️ /writing - Получить задание IELTS по письму.\n"
+                 "🗣️ /speaking - Получить карточку IELTS для говорения.\n"
+                 "ℹ️ /info - Получить советы и стратегии для конкретных типов заданий.\n"
+                 "📖 /grammar - Получить объяснение грамматической темы.")
     await update.message.reply_text(help_text)
 
+@whitelist_only
 async def menu_command(update: Update, context: CallbackContext, force_new_message=False) -> None:
     """Sends an interactive main menu with buttons for all main features."""
     keyboard = [
-        [InlineKeyboardButton("🧠 Vocabulary", callback_data="menu_vocabulary")],
-        [InlineKeyboardButton("✍️ Writing", callback_data="menu_writing")],
-        [InlineKeyboardButton("🗣️ Speaking", callback_data="menu_speaking")],
-        [InlineKeyboardButton("ℹ️ Info", callback_data="menu_info")],
-        [InlineKeyboardButton("📖 Grammar", callback_data="menu_grammar")],
+        [InlineKeyboardButton("🧠 Словарь", callback_data="menu_vocabulary")],
+        [InlineKeyboardButton("✍️ Письмо", callback_data="menu_writing")],
+        [InlineKeyboardButton("🗣️ Говорение", callback_data="menu_speaking")],
+        [InlineKeyboardButton("ℹ️ Информация", callback_data="menu_info")],
+        [InlineKeyboardButton("📖 Грамматика", callback_data="menu_grammar")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if force_new_message:
         chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
         await context.bot.send_message(
             chat_id=chat_id,
-            text="📋 <b>Main Menu</b>\n\nChoose a section to begin:",
+            text="📋 <b>Главное меню</b>\n\nВыберите раздел для начала:",
             reply_markup=reply_markup,
             parse_mode='HTML'
         )
     else:
         await update.message.reply_text(
-            "📋 <b>Main Menu</b>\n\nChoose a section to begin:",
+            "📋 <b>Главное меню</b>\n\nВыберите раздел для начала:",
             reply_markup=reply_markup,
             parse_mode='HTML'
         )
 
 async def menu_button_callback(update: Update, context: CallbackContext) -> None:
+    """Handle main menu button presses with whitelist protection"""
+    user = update.effective_user
+    
+    # Check whitelist
+    if not is_user_authorized(user):
+        logger.warning(f"Unauthorized callback attempt by user {user.id} (@{user.username})")
+        await update.callback_query.answer("Access denied", show_alert=True)
+        return
+    
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -145,33 +246,56 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
         await context.bot.send_message(chat_id=chat_id, text="Unknown menu option.")
 
 async def handle_start_buttons(update: Update, context: CallbackContext) -> None:
-    """Handle buttons from the start command"""
+    """Handle buttons from the start command with whitelist protection"""
+    user = update.effective_user
+    
+    # Check whitelist
+    if not is_user_authorized(user):
+        logger.warning(f"Unauthorized callback attempt by user {user.id} (@{user.username})")
+        await update.callback_query.answer("Access denied", show_alert=True)
+        return
+    
     query = update.callback_query
     await query.answer()
     data = query.data
     
     if data == "menu_help":
-        await menu_command(update, context, force_new_message=True)
+        # Create and send the main menu directly
+        keyboard = [
+            [InlineKeyboardButton("🧠 Словарь", callback_data="menu_vocabulary")],
+            [InlineKeyboardButton("✍️ Письмо", callback_data="menu_writing")],
+            [InlineKeyboardButton("🗣️ Говорение", callback_data="menu_speaking")],
+            [InlineKeyboardButton("ℹ️ Информация", callback_data="menu_info")],
+            [InlineKeyboardButton("📖 Грамматика", callback_data="menu_grammar")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            "📋 <b>Главное меню</b>\n\nВыберите раздел для начала:",
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
     elif data == "help_button":
-        help_text = ("Here are the commands you can use:\n\n"
-                     "📋 /menu - Open the interactive main menu\n"
-                     "🧠 /vocabulary - Get vocabulary words (random or topic-specific).\n"
-                     "✍️ /writing - Get an IELTS writing task.\n"
-                     "🗣️ /speaking - Get an IELTS speaking card.\n"
-                     "ℹ️ /info - Get tips and strategies for specific task types.\n"
-                     "📖 /grammar - Get an explanation of a grammar topic.")
+        help_text = ("Вот команды, которые вы можете использовать:\n\n"
+                     "📋 /menu - Открыть интерактивное главное меню\n"
+                     "🧠 /vocabulary - Получить словарные слова (случайные или по теме).\n"
+                     "✍️ /writing - Получить задание IELTS по письму.\n"
+                     "🗣️ /speaking - Получить карточку IELTS для говорения.\n"
+                     "ℹ️ /info - Получить советы и стратегии для конкретных типов заданий.\n"
+                     "📖 /grammar - Получить объяснение грамматической темы.")
         await query.edit_message_text(help_text)
 
 # --- VOCABULARY (Conversation) ---
+@whitelist_only
 async def start_vocabulary_selection(update: Update, context: CallbackContext, force_new_message=False) -> int:
     if force_new_message:
         chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
         keyboard = [
-            [InlineKeyboardButton("🎲 Random Word", callback_data="vocabulary_random")],
-            [InlineKeyboardButton("📚 Topic-Specific Words", callback_data="vocabulary_topic")],
+            [InlineKeyboardButton("🎲 Случайное слово", callback_data="vocabulary_random")],
+            [InlineKeyboardButton("📚 Слова по теме", callback_data="vocabulary_topic")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await context.bot.send_message(chat_id=chat_id, text="📖 What type of vocabulary would you like?", reply_markup=reply_markup)
+        await context.bot.send_message(chat_id=chat_id, text="📖 Какой тип словаря вы хотите?", reply_markup=reply_markup)
         return GET_VOCABULARY_TOPIC
     if update.message:
         target = update.message
@@ -181,22 +305,31 @@ async def start_vocabulary_selection(update: Update, context: CallbackContext, f
         return
     logger.info(f"🎯 Vocabulary command triggered by user {update.effective_user.id}")
     keyboard = [
-        [InlineKeyboardButton("🎲 Random Word", callback_data="vocabulary_random")],
-        [InlineKeyboardButton("📚 Topic-Specific Words", callback_data="vocabulary_topic")],
+        [InlineKeyboardButton("🎲 Случайное слово", callback_data="vocabulary_random")],
+        [InlineKeyboardButton("📚 Слова по теме", callback_data="vocabulary_topic")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await target.reply_text("📖 What type of vocabulary would you like?", reply_markup=reply_markup)
+    await target.reply_text("📖 Какой тип словаря вы хотите?", reply_markup=reply_markup)
     logger.info(f"✅ Vocabulary options sent to user {update.effective_user.id}, returning state {GET_VOCABULARY_TOPIC}")
     return GET_VOCABULARY_TOPIC
 
 async def handle_vocabulary_choice_callback(update: Update, context: CallbackContext) -> None:
+    """Handle vocabulary choice with whitelist protection"""
+    user = update.effective_user
+    
+    # Check whitelist
+    if not is_user_authorized(user):
+        logger.warning(f"Unauthorized callback attempt by user {user.id}")
+        await update.callback_query.answer("Access denied", show_alert=True)
+        return
+    
     query = update.callback_query
     await query.answer()
     choice = query.data.split('_')[1]  # random or topic
     
     if choice == "random":
         logger.info(f"🎯 User {update.effective_user.id} chose random vocabulary")
-        await query.edit_message_text("🎲 Generating a random word...")
+        await query.edit_message_text("🎲 Генерирую случайное слово...")
         await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
         word_details = get_random_word_details()
         reply_markup = get_common_buttons(generate_again_callback="regenerate_vocabulary")
@@ -205,14 +338,14 @@ async def handle_vocabulary_choice_callback(update: Update, context: CallbackCon
     else:  # topic
         logger.info(f"🎯 User {update.effective_user.id} chose topic-specific vocabulary")
         context.user_data['waiting_for_vocabulary_topic'] = True
-        await query.edit_message_text("📚 Please enter a topic for vocabulary words (e.g., 'environment', 'technology', 'education'):")
+        await query.edit_message_text("📚 Пожалуйста, введите тему для словарных слов (например, 'окружающая среда', 'технологии', 'образование'):")
 
 async def get_topic_and_generate_vocabulary(update: Update, context: CallbackContext) -> int:
     topic = update.message.text
     context.user_data['current_vocabulary_topic'] = topic
     logger.info(f"🎯 Vocabulary: User {update.effective_user.id} requested topic-specific words for: '{topic}'")
     
-    await update.message.reply_text(f"📚 Generating useful vocabulary words for '{topic}'...")
+    await update.message.reply_text(f"📚 Генерирую полезные словарные слова для '{topic}'...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     vocabulary_words = get_topic_specific_words(topic=topic, count=10)
@@ -223,10 +356,19 @@ async def get_topic_and_generate_vocabulary(update: Update, context: CallbackCon
     return ConversationHandler.END
 
 async def regenerate_topic_vocabulary_callback(update: Update, context: CallbackContext) -> int:
+    """Regenerate topic vocabulary with whitelist protection"""
+    user = update.effective_user
+    
+    # Check whitelist
+    if not is_user_authorized(user):
+        logger.warning(f"Unauthorized callback attempt by user {user.id}")
+        await update.callback_query.answer("Access denied", show_alert=True)
+        return ConversationHandler.END
+    
     query = update.callback_query
     await query.answer()
     topic = context.user_data.get('current_vocabulary_topic', 'general')
-    await query.edit_message_text(text=f"🔄 Regenerating vocabulary for '{topic}'...", reply_markup=None)
+    await query.edit_message_text(text=f"🔄 Генерирую словарь для '{topic}'...", reply_markup=None)
     await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
     
     new_vocabulary_words = get_topic_specific_words(topic=topic, count=10)
@@ -243,9 +385,18 @@ async def handle_vocabulary_command(update: Update, context: CallbackContext) ->
     await menu_command(update, context, force_new_message=True)
 
 async def regenerate_vocabulary_callback(update: Update, context: CallbackContext) -> None:
+    """Regenerate vocabulary with whitelist protection"""
+    user = update.effective_user
+    
+    # Check whitelist
+    if not is_user_authorized(user):
+        logger.warning(f"Unauthorized callback attempt by user {user.id}")
+        await update.callback_query.answer("Access denied", show_alert=True)
+        return
+    
     query = update.callback_query
     await query.answer()
-    await query.edit_message_text(text="🔄 Generating a new word...", reply_markup=None)
+    await query.edit_message_text(text="🔄 Генерирую новое слово...", reply_markup=None)
     await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
     word_details = get_random_word_details()
     reply_markup = get_common_buttons(generate_again_callback="regenerate_vocabulary")
@@ -258,7 +409,7 @@ async def handle_vocabulary_topic_input(update: Update, context: CallbackContext
     context.user_data['current_vocabulary_topic'] = topic
     logger.info(f"🎯 Vocabulary: User {update.effective_user.id} requested topic-specific words for: '{topic}'")
     
-    await update.message.reply_text(f"📚 Generating useful vocabulary words for '{topic}'...")
+    await update.message.reply_text(f"📚 Генерирую полезные словарные слова для '{topic}'...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     vocabulary_words = get_topic_specific_words(topic=topic, count=10)
@@ -268,15 +419,16 @@ async def handle_vocabulary_topic_input(update: Update, context: CallbackContext
     await menu_command(update, context, force_new_message=True)
 
 # --- WRITING (Conversation) ---
+@whitelist_only
 async def start_writing_task(update: Update, context: CallbackContext, force_new_message=False) -> int:
     if force_new_message:
         chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
         keyboard = [
-            [InlineKeyboardButton("Task 2 (Essay)", callback_data="writing_task_type_2")],
-            [InlineKeyboardButton("📝 Check Writing", callback_data="writing_check")],
+            [InlineKeyboardButton("Задание 2 (Эссе)", callback_data="writing_task_type_2")],
+            [InlineKeyboardButton("📝 Проверить письмо", callback_data="writing_check")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await context.bot.send_message(chat_id=chat_id, text="✍️ Which type of writing task do you need?", reply_markup=reply_markup)
+        await context.bot.send_message(chat_id=chat_id, text="✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
         return GET_WRITING_TOPIC
     if update.message:
         target = update.message
@@ -286,22 +438,31 @@ async def start_writing_task(update: Update, context: CallbackContext, force_new
         return
     logger.info(f"🎯 Writing command triggered by user {update.effective_user.id}")
     keyboard = [
-        [InlineKeyboardButton("Task 2 (Essay)", callback_data="writing_task_type_2")],
-        [InlineKeyboardButton("📝 Check Writing", callback_data="writing_check")],
+        [InlineKeyboardButton("Задание 2 (Эссе)", callback_data="writing_task_type_2")],
+        [InlineKeyboardButton("📝 Проверить письмо", callback_data="writing_check")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await target.reply_text("✍️ Which type of writing task do you need?", reply_markup=reply_markup)
+    await target.reply_text("✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
     logger.info(f"✅ Writing task options sent to user {update.effective_user.id}, returning state {GET_WRITING_TOPIC}")
     return GET_WRITING_TOPIC
 
 async def handle_writing_task_type_callback(update: Update, context: CallbackContext) -> None:
+    """Handle writing task type selection with whitelist protection"""
+    user = update.effective_user
+    
+    # Check whitelist
+    if not is_user_authorized(user):
+        logger.warning(f"Unauthorized callback attempt by user {user.id}")
+        await update.callback_query.answer("Access denied", show_alert=True)
+        return
+    
     query = update.callback_query
     await query.answer()
     task_type_choice = query.data.split('_')[-1]
     context.user_data['selected_writing_task_type'] = f"Task {task_type_choice}"
     context.user_data['waiting_for_writing_topic'] = True
     logger.info(f"🎯 User {update.effective_user.id} selected writing task type: {context.user_data['selected_writing_task_type']}")
-    await query.edit_message_text(f"✅ You chose {context.user_data['selected_writing_task_type']}. Now, please tell me the topic for your writing task.")
+    await query.edit_message_text(f"✅ Вы выбрали {context.user_data['selected_writing_task_type']}. Теперь, пожалуйста, расскажите мне тему для вашего письменного задания.")
     logger.info(f"✅ User {update.effective_user.id} needs to provide topic, staying in state {GET_WRITING_TOPIC}")
 
 async def handle_writing_topic_input(update: Update, context: CallbackContext) -> None:
@@ -311,15 +472,15 @@ async def handle_writing_topic_input(update: Update, context: CallbackContext) -
     context.user_data['current_writing_topic'] = user_topic
     logger.info(f"🎯 Writing: User {update.effective_user.id} provided topic: '{user_topic}' for {selected_task_type}")
     
-    await update.message.reply_text(f"✅ Great! Generating a {selected_task_type} task on the topic: '{user_topic}'...")
+    await update.message.reply_text(f"✅ Отлично! Генерирую {selected_task_type} на тему: '{user_topic}'...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     writing_task = generate_ielts_writing_task(task_type=selected_task_type, topic=user_topic)
     context.user_data['current_writing_task_description'] = writing_task
     
     reply_markup = get_common_buttons(generate_again_callback="regenerate_writing_task")
-    message_text = (f"Here is your {selected_task_type}:\n\n{writing_task}\n\n"
-                    "Please write your response and send it to me.")
+    message_text = (f"Вот ваше {selected_task_type}:\n\n{writing_task}\n\n"
+                    "Пожалуйста, напишите ваш ответ и отправьте его мне.")
     await send_or_edit_safe_text(update, context, message_text, reply_markup)
     logger.info(f"✅ Writing task generated for user {update.effective_user.id}")
     await menu_command(update, context, force_new_message=True)
@@ -345,11 +506,20 @@ async def get_topic_and_generate_writing(update: Update, context: CallbackContex
     return GET_WRITING_SUBMISSION
 
 async def regenerate_writing_task_callback(update: Update, context: CallbackContext) -> int:
+    """Regenerate writing task with whitelist protection"""
+    user = update.effective_user
+    
+    # Check whitelist
+    if not is_user_authorized(user):
+        logger.warning(f"Unauthorized callback attempt by user {user.id}")
+        await update.callback_query.answer("Access denied", show_alert=True)
+        return ConversationHandler.END
+    
     query = update.callback_query
     await query.answer()
     selected_task_type = context.user_data.get('selected_writing_task_type', 'Task 2')
     user_topic = context.user_data.get('current_writing_topic', 'general')
-    await query.edit_message_text(text=f"🔄 Regenerating {selected_task_type} on '{user_topic}'...", reply_markup=None)
+    await query.edit_message_text(text=f"🔄 Генерирую {selected_task_type} на тему '{user_topic}'...", reply_markup=None)
     await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
     
     new_writing_task = generate_ielts_writing_task(task_type=selected_task_type, topic=user_topic)
@@ -378,13 +548,22 @@ async def handle_writing_submission(update: Update, context: CallbackContext) ->
     return ConversationHandler.END
 
 async def handle_writing_check_callback(update: Update, context: CallbackContext) -> None:
-    """Handle the 'Check Writing' button press"""
+    """Handle the 'Check Writing' button press with whitelist protection"""
+    user = update.effective_user
+    
+    # Check whitelist
+    if not is_user_authorized(user):
+        logger.warning(f"Unauthorized callback attempt by user {user.id}")
+        await update.callback_query.answer("Access denied", show_alert=True)
+        return
+    
     query = update.callback_query
     await query.answer()
     context.user_data['waiting_for_writing_check'] = True
-    await query.edit_message_text("📝 Please paste your writing that you want me to check and evaluate.")
+    await query.edit_message_text("📝 Пожалуйста, вставьте ваше письмо, которое вы хотите, чтобы я проверил и оценил.")
 
 # --- SPEAKING ---
+@whitelist_only
 async def handle_speaking_command(update: Update, context: CallbackContext, force_new_message=False) -> None:
     if force_new_message:
         chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
@@ -411,6 +590,15 @@ async def handle_speaking_command(update: Update, context: CallbackContext, forc
     await target.reply_text("🗣️ Выберите часть устного экзамена для практики:", reply_markup=reply_markup)
 
 async def speaking_part_callback(update: Update, context: CallbackContext) -> None:
+    """Handle speaking part selection with whitelist protection"""
+    user = update.effective_user
+    
+    # Check whitelist
+    if not is_user_authorized(user):
+        logger.warning(f"Unauthorized callback attempt by user {user.id}")
+        await update.callback_query.answer("Access denied", show_alert=True)
+        return
+    
     query = update.callback_query
     await query.answer()
     part_data = query.data
@@ -425,17 +613,27 @@ async def speaking_part_callback(update: Update, context: CallbackContext) -> No
     await menu_command(update, context, force_new_message=True)
 
 async def regenerate_speaking_callback(update: Update, context: CallbackContext) -> None:
+    """Regenerate speaking questions with whitelist protection"""
+    user = update.effective_user
+    
+    # Check whitelist
+    if not is_user_authorized(user):
+        logger.warning(f"Unauthorized callback attempt by user {user.id}")
+        await update.callback_query.answer("Access denied", show_alert=True)
+        return
+    
     query = update.callback_query
     await query.answer()
     part_number_str = query.data.split('_')[-1]
     part_for_api = context.user_data.get('current_speaking_part', f"Part {part_number_str}")
-    await query.edit_message_text(text=f"🔄 Regenerating questions for {part_for_api}...", reply_markup=None)
+    await query.edit_message_text(text=f"🔄 Генерирую вопросы для {part_for_api}...", reply_markup=None)
     await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
     new_speaking_prompt = generate_speaking_question(part=part_for_api)
     reply_markup = get_common_buttons(generate_again_callback=f"regenerate_speaking_{part_number_str}")
     await send_or_edit_safe_text(update, context, new_speaking_prompt, reply_markup)
 
 # --- IELTS INFO ---
+@whitelist_only
 async def handle_info_command(update: Update, context: CallbackContext, force_new_message=False) -> None:
     if force_new_message:
         chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
@@ -472,6 +670,15 @@ async def handle_info_command(update: Update, context: CallbackContext, force_ne
     await target.reply_text("ℹ️ Choose the specific IELTS task type you want strategies for:", reply_markup=reply_markup)
 
 async def info_section_callback(update: Update, context: CallbackContext) -> None:
+    """Handle info section selection with whitelist protection"""
+    user = update.effective_user
+    
+    # Check whitelist
+    if not is_user_authorized(user):
+        logger.warning(f"Unauthorized callback attempt by user {user.id}")
+        await update.callback_query.answer("Access denied", show_alert=True)
+        return
+    
     query = update.callback_query
     await query.answer()
     
@@ -501,11 +708,28 @@ async def info_section_callback(update: Update, context: CallbackContext) -> Non
     await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
 
     strategies_text = generate_ielts_strategies(section=section, task_type=task_type)
+    
+    # Format the strategies text for better mobile display
+    formatted_strategies = format_info_text(strategies_text)
     reply_markup = get_common_buttons(generate_again_callback=f"regenerate_info_{section}_{task_type}")
-    await send_or_edit_safe_text(update, context, strategies_text, reply_markup)
+    
+    await query.edit_message_text(
+        text=formatted_strategies,
+        parse_mode='HTML',
+        reply_markup=reply_markup
+    )
     await menu_command(update, context, force_new_message=True)
 
 async def regenerate_info_callback(update: Update, context: CallbackContext) -> None:
+    """Regenerate info strategies with whitelist protection"""
+    user = update.effective_user
+    
+    # Check whitelist
+    if not is_user_authorized(user):
+        logger.warning(f"Unauthorized callback attempt by user {user.id}")
+        await update.callback_query.answer("Access denied", show_alert=True)
+        return
+    
     query = update.callback_query
     await query.answer()
     
@@ -531,21 +755,30 @@ async def regenerate_info_callback(update: Update, context: CallbackContext) -> 
     task_name = task_type_names.get(task_type, task_type.replace('_', ' ').title())
     section_name = section.capitalize()
 
-    await query.edit_message_text(text=f"🔄 Regenerating strategies for {section_name} - {task_name}...", reply_markup=None)
+    await query.edit_message_text(text=f"🔄 Генерирую стратегии для {section_name} - {task_name}...", reply_markup=None)
     await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
 
     new_strategies_text = generate_ielts_strategies(section=section, task_type=task_type)
+    
+    # Format the strategies text for better mobile display
+    formatted_strategies = format_info_text(new_strategies_text)
     reply_markup = get_common_buttons(generate_again_callback=f"regenerate_info_{section}_{task_type}")
-    await send_or_edit_safe_text(update, context, new_strategies_text, reply_markup)
+    
+    await query.edit_message_text(
+        text=formatted_strategies,
+        parse_mode='HTML',
+        reply_markup=reply_markup
+    )
 
 # --- GRAMMAR (Conversation) ---
+@whitelist_only
 async def start_grammar_explanation(update: Update, context: CallbackContext, force_new_message=False) -> int:
     if force_new_message:
         chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
         context.user_data['waiting_for_grammar_topic'] = True
         await context.bot.send_message(
             chat_id=chat_id,
-            text="📖 What grammar topic would you like an explanation for?\n\nFor example: 'Present Perfect', 'using articles', or 'phrasal verbs'."
+            text="📖 Какую грамматическую тему вы хотите объяснить?\n\nНапример: 'Present Perfect', 'использование артиклей' или 'фразовые глаголы'."
         )
         return GET_GRAMMAR_TOPIC
     if update.message:
@@ -557,8 +790,8 @@ async def start_grammar_explanation(update: Update, context: CallbackContext, fo
     logger.info(f"🎯 Grammar command triggered by user {update.effective_user.id}")
     context.user_data['waiting_for_grammar_topic'] = True
     await target.reply_text(
-        "📖 What grammar topic would you like an explanation for?\n\n"
-        "For example: 'Present Perfect', 'using articles', or 'phrasal verbs'."
+        "📖 Какую грамматическую тему вы хотите объяснить?\n\n"
+        "Например: 'Present Perfect', 'использование артиклей' или 'фразовые глаголы'."
     )
     logger.info(f"✅ Grammar prompt sent to user {update.effective_user.id}, returning state {GET_GRAMMAR_TOPIC}")
     return GET_GRAMMAR_TOPIC
@@ -568,16 +801,16 @@ async def get_grammar_topic(update: Update, context: CallbackContext) -> int:
     context.user_data['current_grammar_topic'] = grammar_topic
     logger.info(f"🎯 Grammar: User {update.effective_user.id} requested explanation for: '{grammar_topic}'")
     
-    await update.message.reply_text(f"Sure! Generating an explanation for '{grammar_topic}'...")
+    await update.message.reply_text(f"Конечно! Генерирую объяснение для '{grammar_topic}'...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     explanation = explain_grammar_structure(grammar_topic=grammar_topic)
     
-    # Format the explanation with escape_markdown_v2
-    formatted_explanation = escape_markdown_v2(explanation)
+    # Format the explanation with HTML instead of MarkdownV2
+    formatted_explanation = format_grammar_text(explanation)
     reply_markup = get_common_buttons(generate_again_callback="regenerate_grammar")
     await update.message.reply_text(
         text=formatted_explanation,
-        parse_mode='MarkdownV2',
+        parse_mode='HTML',
         reply_markup=reply_markup
     )
     logger.info(f"✅ Grammar explanation generated for user {update.effective_user.id}, ending conversation")
@@ -590,35 +823,44 @@ async def handle_grammar_topic_input(update: Update, context: CallbackContext) -
     context.user_data['current_grammar_topic'] = grammar_topic
     logger.info(f"🎯 Grammar: User {update.effective_user.id} requested explanation for: '{grammar_topic}'")
     
-    await update.message.reply_text(f"Sure! Generating an explanation for '{grammar_topic}'...")
+    await update.message.reply_text(f"Конечно! Генерирую объяснение для '{grammar_topic}'...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     explanation = explain_grammar_structure(grammar_topic=grammar_topic)
     
-    # Format the explanation with escape_markdown_v2
-    formatted_explanation = escape_markdown_v2(explanation)
+    # Format the explanation with HTML instead of MarkdownV2
+    formatted_explanation = format_grammar_text(explanation)
     reply_markup = get_common_buttons(generate_again_callback="regenerate_grammar")
     await update.message.reply_text(
         text=formatted_explanation,
-        parse_mode='MarkdownV2',
+        parse_mode='HTML',
         reply_markup=reply_markup
     )
     logger.info(f"✅ Grammar explanation generated for user {update.effective_user.id}")
     await menu_command(update, context, force_new_message=True)
 
 async def regenerate_grammar_callback(update: Update, context: CallbackContext) -> int:
+    """Regenerate grammar explanation with whitelist protection"""
+    user = update.effective_user
+    
+    # Check whitelist
+    if not is_user_authorized(user):
+        logger.warning(f"Unauthorized callback attempt by user {user.id}")
+        await update.callback_query.answer("Access denied", show_alert=True)
+        return ConversationHandler.END
+    
     query = update.callback_query
     await query.answer()
     grammar_topic = context.user_data.get('current_grammar_topic', 'general grammar')
-    await query.edit_message_text(text=f"🔄 Regenerating explanation for '{grammar_topic}'...", reply_markup=None)
+    await query.edit_message_text(text=f"🔄 Генерирую объяснение для '{grammar_topic}'...", reply_markup=None)
     await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
     new_explanation = explain_grammar_structure(grammar_topic=grammar_topic)
     
-    # Format the explanation with escape_markdown_v2
-    formatted_explanation = escape_markdown_v2(new_explanation)
+    # Format the explanation with HTML instead of MarkdownV2
+    formatted_explanation = format_grammar_text(new_explanation)
     reply_markup = get_common_buttons(generate_again_callback="regenerate_grammar")
     await query.edit_message_text(
         text=formatted_explanation,
-        parse_mode='MarkdownV2',
+        parse_mode='HTML',
         reply_markup=reply_markup
     )
     await menu_command(update, context, force_new_message=True)
@@ -629,7 +871,7 @@ async def handle_writing_check_input(update: Update, context: CallbackContext) -
     writing_text = update.message.text
     logger.info(f"🎯 Writing Check: User {update.effective_user.id} submitted writing for evaluation")
     
-    await update.message.reply_text("📝 Checking your writing, please wait...")
+    await update.message.reply_text("📝 Проверяю ваше письмо, пожалуйста, подождите...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     # Use a generic task description for evaluation
@@ -646,7 +888,20 @@ async def handle_writing_check_input(update: Update, context: CallbackContext) -
     await menu_command(update, context, force_new_message=True)
 
 async def handle_global_text_input(update: Update, context: CallbackContext) -> None:
-    """Handle text input globally for vocabulary, grammar, and writing topics"""
+    """Handle text input globally for vocabulary, grammar, and writing topics with whitelist protection"""
+    user = update.effective_user
+    
+    # Check whitelist
+    if not is_user_authorized(user):
+        logger.warning(f"Unauthorized text input attempt by user {user.id}")
+        await update.message.reply_text(
+            "🚫 **Access Denied**\n\n"
+            "You are not authorized to use this bot. "
+            "Please contact the administrator to get access.",
+            parse_mode='Markdown'
+        )
+        return
+    
     text = update.message.text
     
     # Check if user is in vocabulary topic selection mode

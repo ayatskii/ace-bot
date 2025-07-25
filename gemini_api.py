@@ -16,11 +16,11 @@ def initialize_gemini():
         genai.configure(api_key=config.GEMINI_API_KEY)
         model = genai.GenerativeModel(
             model_name='gemini-2.5-flash',
-            system_instruction="You are an elite IELTS tutor and examiner with a 9.0 score. Your responses must be accurate, professional, and directly address the user's request without any unnecessary conversational text."
+            system_instruction="You are an elite IELTS tutor and examiner with a 9.0 score. Your responses must be accurate, professional, and directly address the user's request without any unnecessary conversational text. When the user interface is in Russian, provide your responses in Russian as well."
         )
         writing_model = genai.GenerativeModel(
             model_name='gemini-2.5-pro',
-            system_instruction="You are an elite IELTS tutor and examiner with a 9.0 score. Your responses must be accurate, professional, and directly address the user's request without any unnecessary conversational text."
+            system_instruction="You are an elite IELTS tutor and examiner with a 9.0 score. Your responses must be accurate, professional, and directly address the user's request without any unnecessary conversational text. When the user interface is in Russian, provide your responses in Russian as well."
         )
         logger.info("✅ Gemini API models initialized successfully.")
     except Exception as e:
@@ -267,88 +267,98 @@ def generate_speaking_question(part: str, topic: str = "a common topic") -> str:
     return generate_text(prompt)
 
 def generate_ielts_strategies(section: str, task_type: str = "general") -> str:
-    """Constructs a prompt for a fully formatted message with IELTS strategies."""
+    """Constructs a prompt for a fully formatted message with IELTS strategies in Russian."""
     section_name = section.strip().capitalize()
     
-    # Create task-specific prompts
+    # Create task-specific prompts in Russian
     task_prompts = {
         # Listening task types
-        "truefalse": f"Create specific strategies for IELTS {section_name} True/False questions. Focus on identifying keywords, understanding synonyms, and recognizing when information is contradicted or not mentioned.",
-        "multiplechoice": f"Create specific strategies for IELTS {section_name} Multiple Choice questions. Focus on reading all options before listening, identifying distractors, and understanding the exact meaning of each option.",
-        "notes": f"Create specific strategies for IELTS {section_name} Note Completion tasks. Focus on predicting word types, listening for specific information, and understanding the structure of notes.",
+        "truefalse": f"Создай конкретные стратегии для вопросов Правда/Ложь в IELTS {section_name}. Сосредоточься на определении ключевых слов, понимании синонимов и распознавании, когда информация противоречит или не упоминается.",
+        "multiplechoice": f"Создай конкретные стратегии для вопросов Множественного выбора в IELTS {section_name}. Сосредоточься на чтении всех вариантов перед прослушиванием, определении отвлекающих факторов и понимании точного значения каждого варианта.",
+        "notes": f"Создай конкретные стратегии для заданий Заполнения заметок в IELTS {section_name}. Сосредоточься на предсказании типов слов, прослушивании конкретной информации и понимании структуры заметок.",
         
         # Reading task types
-        "shortanswer": f"Create specific strategies for IELTS {section_name} Short Answer questions. Focus on scanning for keywords, understanding question types, and writing concise answers within word limits.",
-        "headings": f"Create specific strategies for IELTS {section_name} Matching Headings tasks. Focus on understanding main ideas, identifying topic sentences, and recognizing paragraph structure.",
-        "summary": f"Create specific strategies for IELTS {section_name} Summary Completion tasks. Focus on understanding context, predicting word types, and maintaining grammatical accuracy."
+        "shortanswer": f"Создай конкретные стратегии для вопросов Кратких ответов в IELTS {section_name}. Сосредоточься на сканировании ключевых слов, понимании типов вопросов и написании кратких ответов в пределах лимита слов.",
+        "headings": f"Создай конкретные стратегии для заданий Соответствия заголовков в IELTS {section_name}. Сосредоточься на понимании основных идей, определении тематических предложений и распознавании структуры абзацев.",
+        "summary": f"Создай конкретные стратегии для заданий Заполнения резюме в IELTS {section_name}. Сосредоточься на понимании контекста, предсказании типов слов и поддержании грамматической точности."
     }
     
     # Get the specific prompt or use a general one
-    specific_prompt = task_prompts.get(task_type, f"Create general strategies for IELTS {section_name} section")
+    specific_prompt = task_prompts.get(task_type, f"Создай общие стратегии для секции IELTS {section_name}")
     
     prompt = f"""
     {specific_prompt}
 
-    **Your output must strictly follow this exact format with clear sections and proper spacing:**
 
-    💡 TOP STRATEGIES FOR IELTS {section_name.upper()} - {task_type.replace('_', ' ').upper()}
+    **Твой вывод должен строго следовать этому точному формату с четкими разделами и правильными интервалами:**
+
+
+    💡 ТОПОВЫЕ СТРАТЕГИИ ДЛЯ IELTS {section_name.upper()} - {task_type.replace('_', ' ').upper()}
+
 
     ────────────────────────────────────────
-    🎯 ESSENTIAL STRATEGIES
+    🎯 ОСНОВНЫЕ СТРАТЕГИИ
     ────────────────────────────────────────
 
-    1. 📌 [Strategy Name]
-       💬 [Detailed explanation of the strategy with specific tips for this task type]
 
-    2. 📌 [Strategy Name]
-       💬 [Detailed explanation of the strategy with specific tips for this task type]
+    1. 📌 [Название стратегии]
+       💬 [Подробное объяснение стратегии с конкретными советами для этого типа задания]
 
-    3. 📌 [Strategy Name]
-       💬 [Detailed explanation of the strategy with specific tips for this task type]
 
-    4. 📌 [Strategy Name]
-       💬 [Detailed explanation of the strategy with specific tips for this task type]
+    2. 📌 [Название стратегии]
+       💬 [Подробное объяснение стратегии с конкретными советами для этого типа задания]
 
-    5. 📌 [Strategy Name]
-       💬 [Detailed explanation of the strategy with specific tips for this task type]
 
-    **Do not add any concluding text or additional explanations. Use only the format above.**
+    3. 📌 [Название стратегии]
+       💬 [Подробное объяснение стратегии с конкретными советами для этого типа задания]
+
+
+    4. 📌 [Название стратегии]
+       💬 [Подробное объяснение стратегии с конкретными советами для этого типа задания]
+
+
+    5. 📌 [Название стратегии]
+       💬 [Подробное объяснение стратегии с конкретными советами для этого типа задания]
+
+
+    **Не добавляй никакого заключительного текста или дополнительных объяснений. Используй только указанный выше формат.**
     """
     return generate_text(prompt)
 
+
 def explain_grammar_structure(grammar_topic: str) -> str:
-    """Constructs a prompt to get a detailed explanation of a grammar topic."""
+    """Constructs a prompt to get a detailed explanation of a grammar topic in Russian."""
     prompt = f"""
-    Explain the English grammar topic: "{grammar_topic}".
+    Объясни грамматическую тему английского языка: "{grammar_topic}".
 
-    **Your output must strictly follow this exact format with clear sections and proper spacing:**
+    **Твой ответ должен строго следовать этому формату с четкими разделами и правильными отступами:**
 
-    📖 GRAMMAR EXPLANATION: {grammar_topic.upper()}
-
-    ────────────────────────────────────────
-    📚 COMPREHENSIVE GUIDE
-    ────────────────────────────────────────
-
-    1. 📝 What it is:
-       💬 [Simple, clear definition of the grammar structure]
-
-    2. 🔧 How to Form It:
-       💬 [Grammatical formula and structure with examples]
-
-    3. 🎯 When to Use It:
-       💬 [Key use cases and situations where this grammar is appropriate]
-
-    4. 💡 Examples:
-       • [First clear example sentence]
-       • [Second clear example sentence]
-       • [Third clear example sentence]
+    📖 ОБЪЯСНЕНИЕ ГРАММАТИКИ: {grammar_topic.upper()}
 
     ────────────────────────────────────────
-    ⚠️ Common Mistakes to Avoid:
+    📚 ПОДРОБНОЕ РУКОВОДСТВО
     ────────────────────────────────────────
-    • [Common mistake 1]
-    • [Common mistake 2]
 
-    **Keep the explanation clear, concise, and practical for IELTS preparation. Do not add any concluding text.**
+    1. 📝 Что это такое:
+       💬 [Простое, четкое определение грамматической структуры]
+
+    2. 🔧 Как это образуется:
+       💬 [Грамматическая формула и структура с примерами]
+
+    3. 🎯 Когда использовать:
+       💬 [Ключевые случаи использования и ситуации, где эта грамматика уместна]
+
+    4. 💡 Примеры:
+       • [Первый четкий пример предложения]
+       • [Второй четкий пример предложения]
+       • [Третий четкий пример предложения]
+
+    ────────────────────────────────────────
+    ⚠️ Распространенные ошибки:
+    ────────────────────────────────────────
+    • [Распространенная ошибка 1]
+    • [Распространенная ошибка 2]
+
+    **Сделай объяснение ясным, кратким и практичным для подготовки к IELTS. Не добавляй никакого заключительного текста.**
     """
     return generate_text(prompt)

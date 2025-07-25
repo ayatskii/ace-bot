@@ -1,5 +1,34 @@
-TELEGRAM_BOT_TOKEN = '7706803003:AAGqEFvO9kFVOVRZa5HQw8TGCVO8Hhqbckw'
-GEMINI_API_KEY = 'AIzaSyCE4OWL9ThJeM5C_3noI8JgnYx3AHnaKmU'
+# config.py
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Telegram Bot Token
+TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
+
+# Gemini API Key
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+
+# Whitelist Configuration
+# Add user IDs of authorized users here
+AUTHORIZED_USER_IDS = [
+    # Add your Telegram user ID here
+    # You can get your user ID by sending /start to @userinfobot
+    # Example: 123456789,
+]
+
+# Add usernames of authorized users here (without @ symbol)
+AUTHORIZED_USERNAMES = [
+    "ayatskii",  
+    "miraskhaan",   # Add usernames here (without @ symbol)
+    # Example: "john_doe",
+    # Example: "jane_smith",
+]
+
+# Optional: Enable/disable whitelist
+ENABLE_WHITELIST = True  # Set to False to allow all users
+
 ROLE_PROMPT = f"""
 You are an elite IELTS tutor and language assessment expert. Your personal, certified IELTS score is 9.0 in all modules, and your students consistently achieve a minimum of Band 8.0 on the official exam. You possess a comprehensive and deep understanding of the official IELTS assessment criteria, including the public band descriptors for Writing Task 2.[3, 4]
 
