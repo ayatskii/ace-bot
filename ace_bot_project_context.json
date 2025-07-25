@@ -1,0 +1,317 @@
+{
+  "project_name": "ACE Bot",
+  "description": "A comprehensive IELTS (International English Language Testing System) tutoring Telegram bot that provides personalized English language learning assistance through AI-powered interactions",
+  "version": "1.0.0",
+  "language": "Python",
+  "framework": "python-telegram-bot",
+  "ai_provider": "Google Gemini",
+  "target_audience": "IELTS students preparing for the official exam, primarily Russian speakers",
+  "access_control": "Whitelist-based authorization system",
+  
+  "project_structure": {
+    "files": {
+      "main.py": {
+        "description": "Main application entry point and bot setup",
+        "size": "3.9KB",
+        "lines": 73,
+        "key_functions": [
+          "initialize_gemini()",
+          "setup_bot_menu_button()",
+          "register_conversation_handlers()",
+          "register_command_handlers()",
+          "register_callback_handlers()",
+          "run_polling()"
+        ]
+      },
+      "bot_handlers.py": {
+        "description": "Telegram bot command and callback handlers",
+        "size": "50KB",
+        "lines": 986,
+        "key_features": [
+          "whitelist_only decorator",
+          "conversation handlers",
+          "inline keyboard management",
+          "text formatting utilities",
+          "error handling"
+        ]
+      },
+      "gemini_api.py": {
+        "description": "Google Gemini AI integration and content generation",
+        "size": "18KB",
+        "lines": 364,
+        "models": {
+          "gemini-2.5-flash": "General responses and content generation",
+          "gemini-2.5-pro": "Writing evaluations (higher quality analysis)"
+        }
+      },
+      "config.py": {
+        "description": "Configuration and environment settings",
+        "size": "2.3KB",
+        "lines": 48,
+        "configurations": [
+          "API keys",
+          "whitelist settings",
+          "AI prompts",
+          "user authorization"
+        ]
+      },
+      ".env": {
+        "description": "Environment variables for API keys",
+        "size": "281B",
+        "lines": 7,
+        "variables": [
+          "TELEGRAM_BOT_TOKEN",
+          "GEMINI_API_KEY"
+        ]
+      }
+    }
+  },
+
+  "core_features": {
+    "vocabulary_learning": {
+      "random_vocabulary": {
+        "description": "Generates high-level IELTS vocabulary words",
+        "output_format": {
+          "word": "Vocabulary word",
+          "definition": "English definition",
+          "translation": "Russian translation",
+          "example": "Usage example sentence"
+        },
+        "target_level": "IELTS Band 7-9 (C1/C2)"
+      },
+      "topic_specific_vocabulary": {
+        "description": "Provides vocabulary lists for specific IELTS topics",
+        "topics": ["environment", "technology", "society", "education", "health", "business"],
+        "word_count": 10,
+        "format": "Numbered list with definitions and examples"
+      }
+    },
+    "writing_practice": {
+      "task_generation": {
+        "task_1": {
+          "type": "Academic Writing Task 1",
+          "description": "Charts, graphs, or diagrams",
+          "time_limit": "20 minutes",
+          "word_count": "At least 150 words"
+        },
+        "task_2": {
+          "type": "Essay Writing Task 2",
+          "description": "Argument, problem, or discussion questions",
+          "time_limit": "40 minutes",
+          "word_count": "At least 250 words"
+        }
+      },
+      "writing_evaluation": {
+        "criteria": {
+          "task_response": "TR - How well the task is addressed",
+          "coherence_cohesion": "CC - Organization and flow",
+          "lexical_resource": "LR - Vocabulary usage",
+          "grammatical_range_accuracy": "GRA - Grammar and sentence structure"
+        },
+        "output_format": {
+          "overall_band_score": "Calculated score",
+          "examiner_comments": "General summary",
+          "detailed_assessment": "Criterion-by-criterion breakdown",
+          "strengths": "What was done well",
+          "improvements": "Actionable recommendations"
+        }
+      }
+    },
+    "speaking_practice": {
+      "part_1": {
+        "type": "Personal Questions",
+        "question_count": "3-4 questions",
+        "time": "4-5 minutes",
+        "focus": "Personal experiences and opinions"
+      },
+      "part_2": {
+        "type": "Cue Card",
+        "structure": "Topic description with bullet points",
+        "preparation_time": "1 minute",
+        "speaking_time": "1-2 minutes"
+      },
+      "part_3": {
+        "type": "Discussion Questions",
+        "question_count": "3-4 questions",
+        "time": "4-5 minutes",
+        "focus": "In-depth discussion and analysis"
+      }
+    },
+    "grammar_explanations": {
+      "interactive_help": "Users can request explanations for any grammar topic",
+      "output_format": {
+        "definition": "What the grammar structure is",
+        "formation": "How to form it",
+        "usage": "When to use it",
+        "examples": "Clear example sentences",
+        "common_mistakes": "Frequent errors to avoid"
+      },
+      "language_support": "Explanations provided in Russian"
+    },
+    "ielts_strategies": {
+      "listening_strategies": [
+        "True/False questions",
+        "Multiple Choice questions",
+        "Note Completion tasks"
+      ],
+      "reading_strategies": [
+        "Short Answer questions",
+        "True/False/Not Given questions",
+        "Multiple Choice questions",
+        "Matching Headings",
+        "Summary Completion"
+      ],
+      "output_format": "Top 5 strategies with detailed explanations for each task type"
+    }
+  },
+
+  "technical_architecture": {
+    "ai_integration": {
+      "provider": "Google Gemini",
+      "models": {
+        "gemini-2.5-flash": {
+          "purpose": "General responses and content generation",
+          "temperature": 0.9,
+          "system_instruction": "IELTS tutor and examiner with 9.0 score"
+        },
+        "gemini-2.5-pro": {
+          "purpose": "Writing evaluations",
+          "temperature": 0.9,
+          "system_instruction": "IELTS tutor and examiner with 9.0 score"
+        }
+      },
+      "features": [
+        "Bilingual support (Russian/English)",
+        "Structured output formatting",
+        "Consistent persona maintenance",
+        "Error handling and fallbacks"
+      ]
+    },
+    "telegram_bot_features": {
+      "interactive_menus": "Inline keyboard buttons for navigation",
+      "conversation_handlers": "Multi-step interactions for complex features",
+      "regeneration_buttons": "Content regeneration without restarting",
+      "error_handling": "Comprehensive error management and logging",
+      "text_formatting": "HTML and MarkdownV2 support for mobile display"
+    },
+    "security": {
+      "whitelist_system": {
+        "enabled": true,
+        "authentication_methods": [
+          "Telegram user IDs",
+          "Telegram usernames"
+        ],
+        "authorized_users": {
+          "usernames": ["ayatskii", "miraskhaan"],
+          "user_ids": []
+        }
+      },
+      "environment_variables": "Secure API key storage in .env file"
+    }
+  },
+
+  "user_interface": {
+    "commands": {
+      "/start": "Welcome message and bot introduction",
+      "/menu": "Interactive main menu with all features",
+      "/help": "Command list and usage instructions",
+      "/vocabulary": "Vocabulary learning features",
+      "/writing": "Writing task generation and evaluation",
+      "/speaking": "Speaking practice questions",
+      "/info": "IELTS strategies and tips",
+      "/grammar": "Grammar explanations"
+    },
+    "interactive_features": {
+      "inline_buttons": "Easy navigation between features",
+      "regenerate_options": "Users can request new content",
+      "topic_input": "Custom topic specification for vocabulary, writing, and speaking",
+      "writing_submission": "Direct essay submission for evaluation",
+      "conversation_states": {
+        "GET_WRITING_TOPIC": 1,
+        "GET_WRITING_SUBMISSION": 2,
+        "GET_GRAMMAR_TOPIC": 3,
+        "GET_VOCABULARY_TOPIC": 4
+      }
+    }
+  },
+
+  "ai_persona": {
+    "role": "Elite IELTS tutor and language assessment expert",
+    "credentials": "Personal IELTS score of 9.0 in all modules",
+    "student_track_record": "Students consistently achieve minimum Band 8.0",
+    "tone": {
+      "expert_and_authoritative": "Precise knowledge based on official IELTS standards",
+      "rigorous_yet_encouraging": "High standards with supportive and motivating approach",
+      "professional_and_clear": "Professional communication without casual language",
+      "goal_oriented": "Every piece of advice aimed at score improvement"
+    },
+    "language_support": "Responds in Russian when interface is in Russian"
+  },
+
+  "dependencies": {
+    "core_packages": [
+      "python-telegram-bot",
+      "google-generativeai",
+      "python-dotenv"
+    ],
+    "python_version": "3.7+",
+    "additional_requirements": [
+      "logging",
+      "re (regex)",
+      "os",
+      "asyncio"
+    ]
+  },
+
+  "configuration": {
+    "environment_variables": {
+      "TELEGRAM_BOT_TOKEN": "Bot token from @BotFather",
+      "GEMINI_API_KEY": "API key from Google AI Studio"
+    },
+    "whitelist_settings": {
+      "ENABLE_WHITELIST": true,
+      "AUTHORIZED_USER_IDS": [],
+      "AUTHORIZED_USERNAMES": ["ayatskii", "miraskhaan"]
+    },
+    "ai_prompts": {
+      "role_prompt": "Comprehensive IELTS tutor persona definition",
+      "writing_check_prompt": "Writing evaluation instructions"
+    }
+  },
+
+  "output_formats": {
+    "vocabulary": {
+      "random_word": "🎯 VOCABULARY WORD OF THE DAY\n\n📝 Word: [word]\n📖 Definition: [definition]\n🇷🇺 Translation: [translation]\n💡 Example: [example]",
+      "topic_words": "📚 ESSENTIAL VOCABULARY: [TOPIC]\n\n1. 📝 [Word]\n   📖 Definition: [definition]\n   🇷🇺 Translation: [translation]\n   💡 Example: [example]"
+    },
+    "writing": {
+      "task_1": "✍️ IELTS WRITING TASK 1\n\n📊 Task Description: [description]\n📋 Instructions: [instructions]\n⏰ Time: 20 minutes\n📝 Word Count: At least 150 words",
+      "task_2": "✍️ IELTS WRITING TASK 2\n\n🤔 Essay Question: [question]\n📋 Instructions: [instructions]",
+      "evaluation": "📊 IELTS WRITING ASSESSMENT REPORT\n\n🎯 Overall Band Score: [score]\n📝 Examiner's General Comments: [comments]\n\n────────────────────────────────────────\n📋 DETAILED CRITERION-BASED ASSESSMENT\n────────────────────────────────────────\n\n📌 Task Response (TR): Band [score]\n💬 Justification: [justification]\n\n📌 Coherence & Cohesion (CC): Band [score]\n💬 Justification: [justification]\n\n📌 Lexical Resource (LR): Band [score]\n💬 Justification: [justification]\n\n📌 Grammatical Range & Accuracy (GRA): Band [score]\n💬 Justification: [justification]\n\n────────────────────────────────────────\n🎯 KEY STRENGTHS & ACTIONABLE RECOMMENDATIONS\n────────────────────────────────────────\n\n✅ What You Did Well:\n• [strength 1]\n• [strength 2]\n\n🔧 Top Priorities for Improvement:\n• [priority 1]\n• [priority 2]"
+    },
+    "speaking": {
+      "part_1": "🗣️ IELTS SPEAKING PART 1\n\n💬 Personal Questions:\n\n1. [question 1]\n2. [question 2]\n3. [question 3]\n4. [question 4]\n\n⏰ Time: 4-5 minutes\n🎯 Focus: Personal experiences and opinions",
+      "part_2": "🗣️ IELTS SPEAKING PART 2\n\n📋 Cue Card:\nDescribe [topic]\n\nYou should say:\n• [bullet point 1]\n• [bullet point 2]\n• [bullet point 3]\n• [bullet point 4]\n\nAnd explain [explanation]\n\n⏰ Preparation Time: 1 minute\n🎤 Speaking Time: 1-2 minutes",
+      "part_3": "🗣️ IELTS SPEAKING PART 3\n\n💭 Discussion Questions:\n\n1. [question 1]\n2. [question 2]\n3. [question 3]\n4. [question 4]\n\n⏰ Time: 4-5 minutes\n🎯 Focus: In-depth discussion and analysis"
+    },
+    "grammar": "📖 ОБЪЯСНЕНИЕ ГРАММАТИКИ: [TOPIC]\n\n────────────────────────────────────────\n📚 ПОДРОБНОЕ РУКОВОДСТВО\n────────────────────────────────────────\n\n1. 📝 Что это такое:\n   💬 [definition]\n\n2. 🔧 Как это образуется:\n   💬 [formation]\n\n3. 🎯 Когда использовать:\n   💬 [usage]\n\n4. 💡 Примеры:\n   • [example 1]\n   • [example 2]\n   • [example 3]\n\n────────────────────────────────────────\n⚠️ Распространенные ошибки:\n────────────────────────────────────────\n• [error 1]\n• [error 2]",
+    "strategies": "💡 ТОПОВЫЕ СТРАТЕГИИ ДЛЯ IELTS [SECTION] - [TASK_TYPE]\n\n────────────────────────────────────────\n🎯 ОСНОВНЫЕ СТРАТЕГИИ\n────────────────────────────────────────\n\n1. 📌 [strategy 1]\n   💬 [explanation]\n\n2. 📌 [strategy 2]\n   💬 [explanation]\n\n3. 📌 [strategy 3]\n   💬 [explanation]\n\n4. 📌 [strategy 4]\n   💬 [explanation]\n\n5. 📌 [strategy 5]\n   💬 [explanation]"
+  },
+
+  "deployment": {
+    "platform": "Telegram Bot API",
+    "polling_method": "Long polling with allowed_updates=Update.ALL_TYPES",
+    "logging": "INFO level with timestamp and module information",
+    "error_handling": "Global error handler for unhandled exceptions"
+  },
+
+  "development_notes": {
+    "code_quality": "Well-structured with clear separation of concerns",
+    "error_handling": "Comprehensive error management throughout",
+    "logging": "Detailed logging for debugging and monitoring",
+    "security": "Whitelist-based access control implemented",
+    "user_experience": "Intuitive interface with inline buttons and clear navigation",
+    "ai_integration": "Sophisticated prompt engineering for consistent output",
+    "multilingual_support": "Russian language support for target audience"
+  }
+} 
