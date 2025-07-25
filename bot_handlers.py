@@ -18,41 +18,6 @@ GET_WRITING_SUBMISSION = 2
 GET_GRAMMAR_TOPIC = 3
 GET_VOCABULARY_TOPIC = 4
 
-# --- Whitelist Helper Function ---
-def is_user_authorized(user) -> bool:
-    """Check if a user is authorized by ID or username."""
-    if not config.ENABLE_WHITELIST:
-        return True
-    
-    user_id = user.id
-    username = user.username
-    
-    return (
-        user_id in config.AUTHORIZED_USER_IDS or 
-        (username and username in config.AUTHORIZED_USERNAMES)
-    )
-
-# --- Whitelist Decorator ---
-def whitelist_only(func):
-    """Decorator to restrict access to whitelisted users only."""
-    async def wrapper(update: Update, context: CallbackContext, *args, **kwargs):
-        user = update.effective_user
-        
-        # Check if user is authorized
-        if is_user_authorized(user):
-            return await func(update, context, *args, **kwargs)
-        else:
-            logger.warning(f"Unauthorized access attempt by user {user.id} (@{user.username})")
-            await update.message.reply_text(
-                "🚫 **Access Denied**\n\n"
-                "You are not authorized to use this bot. "
-                "Please contact the administrator to get access.",
-                parse_mode='Markdown'
-            )
-            return
-    
-    return wrapper
-
 # --- Utility Functions ---
 def format_info_text(text: str) -> str:
     """Formats info/strategies text for better mobile display."""
@@ -288,7 +253,6 @@ async def setup_bot_menu_button(context: CallbackContext) -> None:
     except Exception as e:
         logger.error(f"🔥 Failed to set bot menu button: {e}")
 
-@whitelist_only
 async def start_command(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     welcome_message = (f"👋 Привет, {user.first_name}!\n\nЯ ваш помощник по подготовке к IELTS...")
@@ -301,7 +265,6 @@ async def start_command(update: Update, context: CallbackContext) -> None:
     
     await update.message.reply_text(welcome_message, reply_markup=reply_markup)
 
-@whitelist_only
 async def help_command(update: Update, context: CallbackContext) -> None:
     help_text = ("Вот команды, которые вы можете использовать:\n\n"
                  "📋 /menu - Открыть интерактивное главное меню\n"
@@ -312,7 +275,6 @@ async def help_command(update: Update, context: CallbackContext) -> None:
                  "📖 /grammar - Получить объяснение грамматической темы.")
     await update.message.reply_text(help_text)
 
-@whitelist_only
 async def menu_command(update: Update, context: CallbackContext, force_new_message=False) -> None:
     """Sends an interactive main menu with buttons for all main features."""
     keyboard = [
@@ -339,14 +301,8 @@ async def menu_command(update: Update, context: CallbackContext, force_new_messa
         )
 
 async def menu_button_callback(update: Update, context: CallbackContext) -> None:
-    """Handle main menu button presses with whitelist protection"""
+    """Handle main menu button presses"""
     user = update.effective_user
-    
-    # Check whitelist
-    if not is_user_authorized(user):
-        logger.warning(f"Unauthorized callback attempt by user {user.id} (@{user.username})")
-        await update.callback_query.answer("Access denied", show_alert=True)
-        return
     
     query = update.callback_query
     await query.answer()
@@ -436,14 +392,8 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
         await query.edit_message_text(f"Unknown menu option: {data}")
 
 async def handle_start_buttons(update: Update, context: CallbackContext) -> None:
-    """Handle buttons from the start command with whitelist protection"""
+    """Handle buttons from the start command"""
     user = update.effective_user
-    
-    # Check whitelist
-    if not is_user_authorized(user):
-        logger.warning(f"Unauthorized callback attempt by user {user.id} (@{user.username})")
-        await update.callback_query.answer("Access denied", show_alert=True)
-        return
     
     query = update.callback_query
     await query.answer()
@@ -476,7 +426,6 @@ async def handle_start_buttons(update: Update, context: CallbackContext) -> None
         await query.edit_message_text(help_text)
 
 # --- VOCABULARY (Conversation) ---
-@whitelist_only
 async def start_vocabulary_selection(update: Update, context: CallbackContext, force_new_message=False) -> int:
     if force_new_message:
         chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
@@ -504,14 +453,8 @@ async def start_vocabulary_selection(update: Update, context: CallbackContext, f
     return GET_VOCABULARY_TOPIC
 
 async def handle_vocabulary_choice_callback(update: Update, context: CallbackContext) -> None:
-    """Handle vocabulary choice with whitelist protection"""
+    """Handle vocabulary choice"""
     user = update.effective_user
-    
-    # Check whitelist
-    if not is_user_authorized(user):
-        logger.warning(f"Unauthorized callback attempt by user {user.id}")
-        await update.callback_query.answer("Access denied", show_alert=True)
-        return
     
     query = update.callback_query
     await query.answer()
@@ -576,7 +519,6 @@ async def handle_vocabulary_topic_input(update: Update, context: CallbackContext
     await menu_command(update, context, force_new_message=True)
 
 # --- WRITING (Conversation) ---
-@whitelist_only
 async def start_writing_task(update: Update, context: CallbackContext, force_new_message=False) -> int:
     if force_new_message:
         chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
@@ -604,14 +546,8 @@ async def start_writing_task(update: Update, context: CallbackContext, force_new
     return GET_WRITING_TOPIC
 
 async def handle_writing_task_type_callback(update: Update, context: CallbackContext) -> None:
-    """Handle writing task type selection with whitelist protection"""
+    """Handle writing task type selection"""
     user = update.effective_user
-    
-    # Check whitelist
-    if not is_user_authorized(user):
-        logger.warning(f"Unauthorized callback attempt by user {user.id}")
-        await update.callback_query.answer("Access denied", show_alert=True)
-        return
     
     query = update.callback_query
     await query.answer()
@@ -685,14 +621,8 @@ async def handle_writing_submission(update: Update, context: CallbackContext) ->
     return ConversationHandler.END
 
 async def handle_writing_check_callback(update: Update, context: CallbackContext) -> None:
-    """Handle the 'Check Writing' button press with whitelist protection"""
+    """Handle the 'Check Writing' button press"""
     user = update.effective_user
-    
-    # Check whitelist
-    if not is_user_authorized(user):
-        logger.warning(f"Unauthorized callback attempt by user {user.id}")
-        await update.callback_query.answer("Access denied", show_alert=True)
-        return
     
     query = update.callback_query
     await query.answer()
@@ -707,7 +637,6 @@ async def handle_writing_check_callback(update: Update, context: CallbackContext
     )
 
 # --- SPEAKING ---
-@whitelist_only
 async def handle_speaking_command(update: Update, context: CallbackContext, force_new_message=False) -> None:
     if force_new_message:
         chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
@@ -734,14 +663,8 @@ async def handle_speaking_command(update: Update, context: CallbackContext, forc
     await target.reply_text("🗣️ Выберите часть устного экзамена для практики:", reply_markup=reply_markup)
 
 async def speaking_part_callback(update: Update, context: CallbackContext) -> None:
-    """Handle speaking part selection with whitelist protection"""
+    """Handle speaking part selection"""
     user = update.effective_user
-    
-    # Check whitelist
-    if not is_user_authorized(user):
-        logger.warning(f"Unauthorized callback attempt by user {user.id}")
-        await update.callback_query.answer("Access denied", show_alert=True)
-        return
     
     query = update.callback_query
     await query.answer()
@@ -757,7 +680,6 @@ async def speaking_part_callback(update: Update, context: CallbackContext) -> No
     await menu_command(update, context, force_new_message=True)
 
 # --- IELTS INFO ---
-@whitelist_only
 async def handle_info_command(update: Update, context: CallbackContext, force_new_message=False) -> None:
     if force_new_message:
         chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
@@ -794,14 +716,8 @@ async def handle_info_command(update: Update, context: CallbackContext, force_ne
     await target.reply_text("ℹ️ Choose the specific IELTS task type you want strategies for:", reply_markup=reply_markup)
 
 async def info_section_callback(update: Update, context: CallbackContext) -> None:
-    """Handle info section selection with whitelist protection"""
+    """Handle info section selection"""
     user = update.effective_user
-    
-    # Check whitelist
-    if not is_user_authorized(user):
-        logger.warning(f"Unauthorized callback attempt by user {user.id}")
-        await update.callback_query.answer("Access denied", show_alert=True)
-        return
     
     query = update.callback_query
     await query.answer()
@@ -845,7 +761,6 @@ async def info_section_callback(update: Update, context: CallbackContext) -> Non
     await menu_command(update, context, force_new_message=True)
 
 # --- GRAMMAR (Conversation) ---
-@whitelist_only
 async def start_grammar_explanation(update: Update, context: CallbackContext, force_new_message=False) -> int:
     if force_new_message:
         chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
@@ -934,19 +849,8 @@ async def handle_writing_check_input(update: Update, context: CallbackContext) -
     await menu_command(update, context, force_new_message=True)
 
 async def handle_global_text_input(update: Update, context: CallbackContext) -> None:
-    """Handle text input globally for vocabulary, grammar, and writing topics with whitelist protection"""
+    """Handle text input globally for vocabulary, grammar, and writing topics"""
     user = update.effective_user
-    
-    # Check whitelist
-    if not is_user_authorized(user):
-        logger.warning(f"Unauthorized text input attempt by user {user.id}")
-        await update.message.reply_text(
-            "🚫 **Access Denied**\n\n"
-            "You are not authorized to use this bot. "
-            "Please contact the administrator to get access.",
-            parse_mode='Markdown'
-        )
-        return
     
     text = update.message.text
     logger.info(f"🔍 Global text input handler called for user {user.id} with text: '{text[:50]}...'")

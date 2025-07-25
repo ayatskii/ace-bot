@@ -1,5 +1,9 @@
 import logging
 import google.generativeai as genai
+import time
+import hashlib
+import random
+import os
 
 import config
 
@@ -12,20 +16,40 @@ def initialize_gemini():
     """Initializes the Gemini model with the API key and a system instruction."""
     global model, writing_model
     try:
-        generation_config = {"temperature": 0.9}
         genai.configure(api_key=config.GEMINI_API_KEY)
+        
+        generation_config = genai.GenerationConfig(
+            temperature=0.9,
+            top_p=0.95,
+            top_k=50,
+            max_output_tokens=800,
+            stop_sequences=['\n\n\n']
+        )
+        
         model = genai.GenerativeModel(
             model_name='gemini-2.5-flash',
-            system_instruction="You are an elite IELTS tutor and examiner with a 9.0 score. Your responses must be accurate, professional, and directly address the user's request without any unnecessary conversational text. When the user interface is in Russian, provide your responses in Russian as well."
+            system_instruction="You are an elite IELTS tutor and examiner with a 9.0 score. Your responses must be accurate, professional, and directly address the user's request without any unnecessary conversational text. When the user interface is in Russian, provide your responses in Russian as well.",
+            generation_config=generation_config
         )
+        
+        writing_config = genai.GenerationConfig(
+            temperature=0.7,
+            top_p=0.8,
+            top_k=40,
+            max_output_tokens=1200
+        )
+        
         writing_model = genai.GenerativeModel(
             model_name='gemini-2.5-pro',
-            system_instruction="You are an elite IELTS tutor and examiner with a 9.0 score. Your responses must be accurate, professional, and directly address the user's request without any unnecessary conversational text. When the user interface is in Russian, provide your responses in Russian as well."
+            system_instruction="You are an elite IELTS tutor and examiner with a 9.0 score. Your responses must be accurate, professional, and directly address the user's request without any unnecessary conversational text. When the user interface is in Russian, provide your responses in Russian as well.",
+            generation_config=writing_config
         )
+        
         logger.info("✅ Gemini API models initialized successfully.")
     except Exception as e:
         logger.error(f"🔥 Failed to initialize Gemini API: {e}")
         raise
+
 
 def generate_text(prompt: str) -> str:
     """Sends a prompt to the initialized Gemini model and returns the text response."""
@@ -56,9 +80,17 @@ def generate_writing_text(prompt: str) -> str:
         return "Sorry, I encountered an error while processing your writing evaluation."
 
 def get_random_word_details(word_level="IELTS Band 7-9 (C1/C2)") -> str:
-    """Generates a single, random, high-level vocabulary word."""
+    entropy_sources = [
+        str(time.time()),
+        str(random.randint(1, 1000000)),
+        os.urandom(8).hex(),
+        str(hash(time.time()))
+    ]
+    combined_entropy = ''.join(entropy_sources)
+    seed = hashlib.sha256(combined_entropy.encode()).hexdigest()[:12]
+    
     prompt = f"""
-    Generate one advanced English vocabulary word suitable for a {word_level} student, relevant to a common IELTS topic (e.g., environment, technology, society).
+    Generate one advanced English vocabulary word suitable for a {word_level} student, relevant to a common IELTS topic (e.g., environment, technology, society). Use this unique seed for maximum variation: {seed}.
 
     **Your output must strictly follow this exact format with clear sections and proper spacing:**
 
