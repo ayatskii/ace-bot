@@ -124,7 +124,6 @@ def escape_markdown_v2(text: str) -> str:
     # Escape special characters for MarkdownV2
     escaped_text = text.replace('\\', '\\\\')
     escaped_text = escaped_text.replace('_', '\\_')
-    escaped_text = escaped_text.replace('*', '\\*')
     escaped_text = escaped_text.replace('[', '\\[')
     escaped_text = escaped_text.replace(']', '\\]')
     escaped_text = escaped_text.replace('(', '\\(')
@@ -142,12 +141,15 @@ def escape_markdown_v2(text: str) -> str:
     escaped_text = escaped_text.replace('.', '\\.')
     escaped_text = escaped_text.replace('!', '\\!')
     
-    # Handle bold formatting - escape asterisks but preserve ** for bold
-    escaped_text = escaped_text.replace('**', '\\*\\*')
+    # Handle bold formatting - preserve ** for bold in MarkdownV2
+    # First, temporarily replace ** with a placeholder
+    escaped_text = escaped_text.replace('**', 'BOLD_PLACEHOLDER')
     
-    # Handle any other potential formatting issues
-    # Replace any unescaped asterisks that might be used for emphasis
-    escaped_text = re.sub(r'(?<!\\)\*(?!\*)', r'\\*', escaped_text)
+    # Escape all remaining single asterisks
+    escaped_text = escaped_text.replace('*', '\\*')
+    
+    # Restore bold formatting
+    escaped_text = escaped_text.replace('BOLD_PLACEHOLDER', '*')
     
     return escaped_text
 
@@ -523,7 +525,11 @@ async def handle_vocabulary_topic_input(update: Update, context: CallbackContext
 # --- WRITING (Conversation) ---
 async def start_writing_task(update: Update, context: CallbackContext, force_new_message=False) -> int:
     if force_new_message:
-        chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
+        # Handle both command and callback query cases
+        if update.callback_query:
+            chat_id = update.callback_query.message.chat_id
+        else:
+            chat_id = update.effective_chat.id
         keyboard = [
             [InlineKeyboardButton("Задание 2 (Эссе)", callback_data="writing_task_type_2")],
             [InlineKeyboardButton("📝 Проверить письмо", callback_data="writing_check")],
@@ -615,19 +621,26 @@ async def handle_writing_submission(update: Update, context: CallbackContext) ->
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     feedback = evaluate_writing(writing_text=student_writing, task_description=task_description)
-    message_text = f"Here's the feedback on your writing:\n\n{feedback}"
-    await send_or_edit_safe_text(update, context, message_text)
+    await send_or_edit_safe_text(update, context, feedback)
     
     context.user_data.clear()
     await menu_command(update, context, force_new_message=True)
     return ConversationHandler.END
 
 async def handle_writing_check_callback(update: Update, context: CallbackContext) -> None:
-    """Handle the 'Check Writing' button press - starts the writing check conversation"""
+    """Handle the 'Check Essay' button press - starts the writing check conversation"""
     user = update.effective_user
     
     query = update.callback_query
     await query.answer()
+    
+    # End any existing conversation
+    if context.user_data.get('waiting_for_writing_topic'):
+        context.user_data.pop('waiting_for_writing_topic', None)
+    if context.user_data.get('selected_writing_task_type'):
+        context.user_data.pop('selected_writing_task_type', None)
+    if context.user_data.get('current_writing_topic'):
+        context.user_data.pop('current_writing_topic', None)
     
     # Set the user in writing check task mode
     context.user_data['waiting_for_writing_check_task'] = True
@@ -870,12 +883,9 @@ async def handle_writing_check_essay_input(update: Update, context: CallbackCont
     
     feedback = evaluate_writing(writing_text=essay_text, task_description=task_description)
     
-    # Format the feedback with escape_markdown_v2
-    formatted_feedback = escape_markdown_v2(feedback)
-    await update.message.reply_text(
-        text=formatted_feedback,
-        parse_mode='MarkdownV2'
-    )
+    # Use send_or_edit_safe_text to ensure consistent formatting with double asterisks
+    reply_markup = None
+    await send_or_edit_safe_text(update, context, feedback, reply_markup)
     logger.info(f"✅ Writing evaluation completed for user {update.effective_user.id}")
     
     # Clear the writing check data
