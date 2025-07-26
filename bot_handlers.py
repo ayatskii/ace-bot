@@ -17,6 +17,8 @@ GET_WRITING_TOPIC = 1
 GET_WRITING_SUBMISSION = 2
 GET_GRAMMAR_TOPIC = 3
 GET_VOCABULARY_TOPIC = 4
+GET_WRITING_CHECK_TASK = 5
+GET_WRITING_CHECK_ESSAY = 6
 
 # --- Utility Functions ---
 def format_info_text(text: str) -> str:
@@ -621,18 +623,22 @@ async def handle_writing_submission(update: Update, context: CallbackContext) ->
     return ConversationHandler.END
 
 async def handle_writing_check_callback(update: Update, context: CallbackContext) -> None:
-    """Handle the 'Check Writing' button press"""
+    """Handle the 'Check Writing' button press - starts the writing check conversation"""
     user = update.effective_user
     
     query = update.callback_query
     await query.answer()
-    context.user_data['waiting_for_writing_check'] = True
+    
+    # Set the user in writing check task mode
+    context.user_data['waiting_for_writing_check_task'] = True
     keyboard = [
         [InlineKeyboardButton("🔙 Назад к письму", callback_data="menu_writing")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.edit_message_text(
-        "📝 Пожалуйста, вставьте ваше письмо, которое вы хотите, чтобы я проверил и оценил.",
+        "📝 Для проверки вашего письма мне нужна информация о задании.\n\n"
+        "Пожалуйста, опишите задание IELTS Writing Task, которое вы выполняли.\n"
+        "Например: 'Напишите эссе о преимуществах и недостатках социальных сетей'",
         reply_markup=reply_markup
     )
 
@@ -835,17 +841,34 @@ async def handle_grammar_topic_input(update: Update, context: CallbackContext) -
     logger.info(f"✅ Grammar explanation generated for user {update.effective_user.id}")
     await menu_command(update, context, force_new_message=True)
 
-async def handle_writing_check_input(update: Update, context: CallbackContext) -> None:
-    """Handle writing check input from users"""
-    writing_text = update.message.text
-    logger.info(f"🎯 Writing Check: User {update.effective_user.id} submitted writing for evaluation")
+async def handle_writing_check_task_input(update: Update, context: CallbackContext) -> None:
+    """Handle writing check task input from users - first step of writing check"""
+    task_description = update.message.text
+    context.user_data['current_writing_check_task'] = task_description
+    logger.info(f"🎯 Writing Check Task: User {update.effective_user.id} provided task: '{task_description}'")
+    
+    # Set the user in writing check essay mode
+    context.user_data['waiting_for_writing_check_essay'] = True
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад к письму", callback_data="menu_writing")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        f"✅ Задание получено: '{task_description}'\n\n"
+        "Теперь пожалуйста, вставьте ваше эссе для проверки:",
+        reply_markup=reply_markup
+    )
+
+async def handle_writing_check_essay_input(update: Update, context: CallbackContext) -> None:
+    """Handle writing check essay input from users - second step of writing check"""
+    essay_text = update.message.text
+    task_description = context.user_data.get('current_writing_check_task', 'No task provided')
+    logger.info(f"🎯 Writing Check Essay: User {update.effective_user.id} submitted essay for evaluation")
     
     await update.message.reply_text("📝 Проверяю ваше письмо, пожалуйста, подождите...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
-    # Use a generic task description for evaluation
-    task_description = "IELTS Writing Task - General Evaluation"
-    feedback = evaluate_writing(writing_text=writing_text, task_description=task_description)
+    feedback = evaluate_writing(writing_text=essay_text, task_description=task_description)
     
     # Format the feedback with escape_markdown_v2
     formatted_feedback = escape_markdown_v2(feedback)
@@ -854,6 +877,11 @@ async def handle_writing_check_input(update: Update, context: CallbackContext) -
         parse_mode='MarkdownV2'
     )
     logger.info(f"✅ Writing evaluation completed for user {update.effective_user.id}")
+    
+    # Clear the writing check data
+    context.user_data.pop('current_writing_check_task', None)
+    context.user_data.pop('waiting_for_writing_check_essay', None)
+    
     await menu_command(update, context, force_new_message=True)
 
 async def handle_global_text_input(update: Update, context: CallbackContext) -> None:
@@ -885,10 +913,17 @@ async def handle_global_text_input(update: Update, context: CallbackContext) -> 
         return
     
     # Check if user is in writing check mode
-    if context.user_data.get('waiting_for_writing_check'):
-        logger.info(f"📝 User {user.id} is in writing check mode")
-        context.user_data.pop('waiting_for_writing_check', None)
-        await handle_writing_check_input(update, context)
+    if context.user_data.get('waiting_for_writing_check_task'):
+        logger.info(f"📝 User {user.id} is in writing check task mode")
+        context.user_data.pop('waiting_for_writing_check_task', None)
+        await handle_writing_check_task_input(update, context)
+        return
+    
+    # Check if user is in writing check essay mode
+    if context.user_data.get('waiting_for_writing_check_essay'):
+        logger.info(f"📝 User {user.id} is in writing check essay mode")
+        context.user_data.pop('waiting_for_writing_check_essay', None)
+        await handle_writing_check_essay_input(update, context)
         return
     
     # If not in any specific mode, ignore the text
