@@ -48,10 +48,10 @@ def main():
     application.add_handler(CallbackQueryHandler(bot_handlers.info_section_callback, pattern=r'^info_(listening|reading)_'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_start_buttons, pattern=r'^(menu_help|help_button)$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.menu_button_callback, pattern=r'^menu_(vocabulary|writing|speaking|info|grammar)$|^back_to_main_menu$'))
-    # Add global handlers for vocabulary and writing buttons
-    application.add_handler(CallbackQueryHandler(bot_handlers.handle_vocabulary_choice_callback, pattern=r'^vocabulary_(random|topic)$'))
-    application.add_handler(CallbackQueryHandler(bot_handlers.handle_writing_task_type_callback, pattern=r'^writing_task_type_\d$'))
-    application.add_handler(CallbackQueryHandler(bot_handlers.handle_writing_check_callback, pattern=r'^writing_check$'))
+    # Add global handlers for vocabulary and writing buttons (for menu-based access)
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_vocabulary_choice_global, pattern=r'^vocabulary_(random|topic)$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_writing_task_type_global, pattern=r'^writing_task_type_\d$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_writing_check_global, pattern=r'^writing_check$'))
     
     logger.info("✅ Callback query handlers registered.")
 

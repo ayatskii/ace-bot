@@ -222,19 +222,71 @@ async def send_long_message(update: Update, context: CallbackContext, text: str,
                     )
 
 async def send_or_edit_safe_text(update: Update, context: CallbackContext, text: str, reply_markup: InlineKeyboardMarkup = None):
-    """A helper to send text with MarkdownV2, falling back to plain text on error."""
-    try:
-        safe_text = escape_markdown_v2(text)
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text=safe_text, parse_mode='MarkdownV2', reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(text=safe_text, parse_mode='MarkdownV2', reply_markup=reply_markup)
-    except Exception as e:
-        logger.warning(f"MarkdownV2 parsing failed, falling back to plain text: {e}")
-        if update.callback_query:
-            await update.callback_query.edit_message_text(text=text, reply_markup=reply_markup)
-        else:
-            await update.message.reply_text(text=text, reply_markup=reply_markup)
+    """A helper to send text with MarkdownV2, falling back to plain text on error, and splitting long messages."""
+    max_length = 4000  # Leave some buffer for safety
+    
+    if len(text) <= max_length:
+        # Message is short enough, send normally with markdown formatting
+        try:
+            safe_text = escape_markdown_v2(text)
+            if update.callback_query:
+                await update.callback_query.edit_message_text(text=safe_text, parse_mode='MarkdownV2', reply_markup=reply_markup)
+            else:
+                await update.message.reply_text(text=safe_text, parse_mode='MarkdownV2', reply_markup=reply_markup)
+        except Exception as e:
+            logger.warning(f"MarkdownV2 parsing failed, falling back to plain text: {e}")
+            if update.callback_query:
+                await update.callback_query.edit_message_text(text=text, reply_markup=reply_markup)
+            else:
+                await update.message.reply_text(text=text, reply_markup=reply_markup)
+    else:
+        # Split the message and send with markdown formatting
+        parts = []
+        current_part = ""
+        
+        lines = text.split('\n')
+        
+        for line in lines:
+            if len(current_part + line + '\n') > max_length:
+                if current_part:
+                    parts.append(current_part.strip())
+                    current_part = line + '\n'
+                else:
+                    parts.append(line[:max_length])
+                    current_part = line[max_length:] + '\n'
+            else:
+                current_part += line + '\n'
+        
+        if current_part.strip():
+            parts.append(current_part.strip())
+        
+        # Send parts with markdown formatting
+        for i, part in enumerate(parts):
+            try:
+                safe_part = escape_markdown_v2(part)
+                if i == 0:  # First part with reply markup
+                    if update.callback_query:
+                        await update.callback_query.edit_message_text(text=safe_part, parse_mode='MarkdownV2', reply_markup=reply_markup)
+                    else:
+                        await update.message.reply_text(text=safe_part, parse_mode='MarkdownV2', reply_markup=reply_markup)
+                else:  # Subsequent parts
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=safe_part,
+                        parse_mode='MarkdownV2'
+                    )
+            except Exception as e:
+                logger.warning(f"MarkdownV2 parsing failed for part {i}, falling back to plain text: {e}")
+                if i == 0:
+                    if update.callback_query:
+                        await update.callback_query.edit_message_text(text=part, reply_markup=reply_markup)
+                    else:
+                        await update.message.reply_text(text=part, reply_markup=reply_markup)
+                else:
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=part
+                    )
 
 async def setup_bot_menu_button(context: CallbackContext) -> None:
     """Sets up the bot menu button with main commands"""
@@ -316,7 +368,7 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
     logger.info(f"🔍 Menu button callback received data: '{data}' from user {user.id}")
     
     if data == "menu_vocabulary":
-        # Handle vocabulary menu selection
+        # Handle vocabulary menu selection - direct approach to avoid conversation handler conflicts
         keyboard = [
             [InlineKeyboardButton("🎲 Случайное слово", callback_data="vocabulary_random")],
             [InlineKeyboardButton("📚 Слова по теме", callback_data="vocabulary_topic")],
@@ -326,7 +378,7 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
         await query.edit_message_text("📖 Какой тип словаря вы хотите?", reply_markup=reply_markup)
         
     elif data == "menu_writing":
-        # Handle writing menu selection
+        # Handle writing menu selection - direct approach to avoid conversation handler conflicts
         keyboard = [
             [InlineKeyboardButton("Задание 2 (Эссе)", callback_data="writing_task_type_2")],
             [InlineKeyboardButton("📝 Проверить письмо", callback_data="writing_check")],
@@ -431,33 +483,31 @@ async def handle_start_buttons(update: Update, context: CallbackContext) -> None
 
 # --- VOCABULARY (Conversation) ---
 async def start_vocabulary_selection(update: Update, context: CallbackContext, force_new_message=False) -> int:
-    if force_new_message:
-        chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
-        keyboard = [
-            [InlineKeyboardButton("🎲 Случайное слово", callback_data="vocabulary_random")],
-            [InlineKeyboardButton("📚 Слова по теме", callback_data="vocabulary_topic")],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await context.bot.send_message(chat_id=chat_id, text="📖 Какой тип словаря вы хотите?", reply_markup=reply_markup)
-        return GET_VOCABULARY_TOPIC
-    if update.message:
-        target = update.message
-    elif update.callback_query:
-        target = update.callback_query.message
-    else:
-        return
-    logger.info(f"🎯 Vocabulary command triggered by user {update.effective_user.id}")
     keyboard = [
         [InlineKeyboardButton("🎲 Случайное слово", callback_data="vocabulary_random")],
         [InlineKeyboardButton("📚 Слова по теме", callback_data="vocabulary_topic")],
+        [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await target.reply_text("📖 Какой тип словаря вы хотите?", reply_markup=reply_markup)
-    logger.info(f"✅ Vocabulary options sent to user {update.effective_user.id}, returning state {GET_VOCABULARY_TOPIC}")
+    if force_new_message:
+        # Try to edit if possible, else send new message
+        if hasattr(update, 'callback_query') and update.callback_query:
+            await update.callback_query.edit_message_text("📖 Какой тип словаря вы хотите?", reply_markup=reply_markup)
+        elif hasattr(update, 'message') and update.message:
+            await update.message.reply_text("📖 Какой тип словаря вы хотите?", reply_markup=reply_markup)
+        else:
+            chat_id = update.effective_chat.id if update.effective_chat else None
+            if chat_id:
+                await context.bot.send_message(chat_id=chat_id, text="📖 Какой тип словаря вы хотите?", reply_markup=reply_markup)
+        return GET_VOCABULARY_TOPIC
+    if hasattr(update, 'callback_query') and update.callback_query:
+        await update.callback_query.edit_message_text("📖 Какой тип словаря вы хотите?", reply_markup=reply_markup)
+    elif hasattr(update, 'message') and update.message:
+        await update.message.reply_text("📖 Какой тип словаря вы хотите?", reply_markup=reply_markup)
     return GET_VOCABULARY_TOPIC
 
-async def handle_vocabulary_choice_callback(update: Update, context: CallbackContext) -> None:
-    """Handle vocabulary choice"""
+async def handle_vocabulary_choice_callback(update: Update, context: CallbackContext) -> int:
+    """Handle vocabulary choice - for conversation handler"""
     user = update.effective_user
     
     query = update.callback_query
@@ -472,8 +522,38 @@ async def handle_vocabulary_choice_callback(update: Update, context: CallbackCon
         reply_markup = None
         await send_or_edit_safe_text(update, context, word_details, reply_markup)
         await menu_command(update, context, force_new_message=True)
+        return ConversationHandler.END
     else:  # topic
         logger.info(f"🎯 User {update.effective_user.id} chose topic-specific vocabulary")
+        context.user_data['waiting_for_vocabulary_topic'] = True
+        keyboard = [
+            [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            "📚 Пожалуйста, введите тему для словарных слов (например, 'окружающая среда', 'технологии', 'образование'):",
+            reply_markup=reply_markup
+        )
+        return GET_VOCABULARY_TOPIC
+
+async def handle_vocabulary_choice_global(update: Update, context: CallbackContext) -> None:
+    """Handle vocabulary choice - for global handler (menu-based access)"""
+    user = update.effective_user
+    
+    query = update.callback_query
+    await query.answer()
+    choice = query.data.split('_')[1]  # random or topic
+    
+    if choice == "random":
+        logger.info(f"🎯 User {update.effective_user.id} chose random vocabulary (global)")
+        await query.edit_message_text("🎲 Генерирую случайное слово...")
+        await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
+        word_details = get_random_word_details()
+        reply_markup = None
+        await send_or_edit_safe_text(update, context, word_details, reply_markup)
+        await menu_command(update, context, force_new_message=True)
+    else:  # topic
+        logger.info(f"🎯 User {update.effective_user.id} chose topic-specific vocabulary (global)")
         context.user_data['waiting_for_vocabulary_topic'] = True
         keyboard = [
             [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")],
@@ -524,36 +604,30 @@ async def handle_vocabulary_topic_input(update: Update, context: CallbackContext
 
 # --- WRITING (Conversation) ---
 async def start_writing_task(update: Update, context: CallbackContext, force_new_message=False) -> int:
-    if force_new_message:
-        # Handle both command and callback query cases
-        if update.callback_query:
-            chat_id = update.callback_query.message.chat_id
-        else:
-            chat_id = update.effective_chat.id
-        keyboard = [
-            [InlineKeyboardButton("Задание 2 (Эссе)", callback_data="writing_task_type_2")],
-            [InlineKeyboardButton("📝 Проверить письмо", callback_data="writing_check")],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await context.bot.send_message(chat_id=chat_id, text="✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
-        return GET_WRITING_TOPIC
-    if update.message:
-        target = update.message
-    elif update.callback_query:
-        target = update.callback_query.message
-    else:
-        return
-    logger.info(f"🎯 Writing command triggered by user {update.effective_user.id}")
     keyboard = [
         [InlineKeyboardButton("Задание 2 (Эссе)", callback_data="writing_task_type_2")],
         [InlineKeyboardButton("📝 Проверить письмо", callback_data="writing_check")],
+        [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await target.reply_text("✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
-    logger.info(f"✅ Writing task options sent to user {update.effective_user.id}, returning state {GET_WRITING_TOPIC}")
+    if force_new_message:
+        # Try to edit if possible, else send new message
+        if hasattr(update, 'callback_query') and update.callback_query:
+            await update.callback_query.edit_message_text("✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
+        elif hasattr(update, 'message') and update.message:
+            await update.message.reply_text("✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
+        else:
+            chat_id = update.effective_chat.id if update.effective_chat else None
+            if chat_id:
+                await context.bot.send_message(chat_id=chat_id, text="✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
+        return GET_WRITING_TOPIC
+    if hasattr(update, 'callback_query') and update.callback_query:
+        await update.callback_query.edit_message_text("✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
+    elif hasattr(update, 'message') and update.message:
+        await update.message.reply_text("✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
     return GET_WRITING_TOPIC
 
-async def handle_writing_task_type_callback(update: Update, context: CallbackContext) -> None:
+async def handle_writing_task_type_callback(update: Update, context: CallbackContext) -> int:
     """Handle writing task type selection"""
     user = update.effective_user
     
@@ -572,6 +646,7 @@ async def handle_writing_task_type_callback(update: Update, context: CallbackCon
         reply_markup=reply_markup
     )
     logger.info(f"✅ User {update.effective_user.id} needs to provide topic, staying in state {GET_WRITING_TOPIC}")
+    return GET_WRITING_TOPIC
 
 async def handle_writing_topic_input(update: Update, context: CallbackContext) -> None:
     """Handle writing topic input from users, works globally"""
@@ -627,7 +702,7 @@ async def handle_writing_submission(update: Update, context: CallbackContext) ->
     await menu_command(update, context, force_new_message=True)
     return ConversationHandler.END
 
-async def handle_writing_check_callback(update: Update, context: CallbackContext) -> None:
+async def handle_writing_check_callback(update: Update, context: CallbackContext) -> int:
     """Handle the 'Check Essay' button press - starts the writing check conversation"""
     user = update.effective_user
     
@@ -642,8 +717,6 @@ async def handle_writing_check_callback(update: Update, context: CallbackContext
     if context.user_data.get('current_writing_topic'):
         context.user_data.pop('current_writing_topic', None)
     
-    # Set the user in writing check task mode
-    context.user_data['waiting_for_writing_check_task'] = True
     keyboard = [
         [InlineKeyboardButton("🔙 Назад к письму", callback_data="menu_writing")],
     ]
@@ -654,6 +727,8 @@ async def handle_writing_check_callback(update: Update, context: CallbackContext
         "Например: 'Напишите эссе о преимуществах и недостатках социальных сетей'",
         reply_markup=reply_markup
     )
+    
+    return GET_WRITING_CHECK_TASK
 
 # --- SPEAKING ---
 async def handle_speaking_command(update: Update, context: CallbackContext, force_new_message=False) -> None:
@@ -854,14 +929,15 @@ async def handle_grammar_topic_input(update: Update, context: CallbackContext) -
     logger.info(f"✅ Grammar explanation generated for user {update.effective_user.id}")
     await menu_command(update, context, force_new_message=True)
 
-async def handle_writing_check_task_input(update: Update, context: CallbackContext) -> None:
+async def handle_writing_check_task_input(update: Update, context: CallbackContext) -> int:
     """Handle writing check task input from users - first step of writing check"""
     task_description = update.message.text
     context.user_data['current_writing_check_task'] = task_description
     logger.info(f"🎯 Writing Check Task: User {update.effective_user.id} provided task: '{task_description}'")
     
-    # Set the user in writing check essay mode
+    # Set the user in writing check essay mode for global handler
     context.user_data['waiting_for_writing_check_essay'] = True
+    
     keyboard = [
         [InlineKeyboardButton("🔙 Назад к письму", callback_data="menu_writing")],
     ]
@@ -871,8 +947,10 @@ async def handle_writing_check_task_input(update: Update, context: CallbackConte
         "Теперь пожалуйста, вставьте ваше эссе для проверки:",
         reply_markup=reply_markup
     )
+    
+    return GET_WRITING_CHECK_ESSAY
 
-async def handle_writing_check_essay_input(update: Update, context: CallbackContext) -> None:
+async def handle_writing_check_essay_input(update: Update, context: CallbackContext) -> int:
     """Handle writing check essay input from users - second step of writing check"""
     essay_text = update.message.text
     task_description = context.user_data.get('current_writing_check_task', 'No task provided')
@@ -883,16 +961,16 @@ async def handle_writing_check_essay_input(update: Update, context: CallbackCont
     
     feedback = evaluate_writing(writing_text=essay_text, task_description=task_description)
     
-    # Use send_or_edit_safe_text to ensure consistent formatting with double asterisks
+    # Use send_or_edit_safe_text to ensure proper markdown formatting with fallback
     reply_markup = None
     await send_or_edit_safe_text(update, context, feedback, reply_markup)
     logger.info(f"✅ Writing evaluation completed for user {update.effective_user.id}")
     
     # Clear the writing check data
     context.user_data.pop('current_writing_check_task', None)
-    context.user_data.pop('waiting_for_writing_check_essay', None)
     
     await menu_command(update, context, force_new_message=True)
+    return ConversationHandler.END
 
 async def handle_global_text_input(update: Update, context: CallbackContext) -> None:
     """Handle text input globally for vocabulary, grammar, and writing topics"""
@@ -922,16 +1000,16 @@ async def handle_global_text_input(update: Update, context: CallbackContext) -> 
         await handle_writing_topic_input(update, context)
         return
     
-    # Check if user is in writing check mode
+    # Check if user is in writing check mode (for menu-based access)
     if context.user_data.get('waiting_for_writing_check_task'):
-        logger.info(f"📝 User {user.id} is in writing check task mode")
+        logger.info(f"📝 User {user.id} is in writing check task mode (global)")
         context.user_data.pop('waiting_for_writing_check_task', None)
         await handle_writing_check_task_input(update, context)
         return
     
-    # Check if user is in writing check essay mode
+    # Check if user is in writing check essay mode (for menu-based access)
     if context.user_data.get('waiting_for_writing_check_essay'):
-        logger.info(f"📝 User {user.id} is in writing check essay mode")
+        logger.info(f"📝 User {user.id} is in writing check essay mode (global)")
         context.user_data.pop('waiting_for_writing_check_essay', None)
         await handle_writing_check_essay_input(update, context)
         return
@@ -957,10 +1035,18 @@ writing_conversation_handler = ConversationHandler(
     states={
         GET_WRITING_TOPIC: [
             CallbackQueryHandler(handle_writing_task_type_callback, pattern=r'^writing_task_type_\d$'),
+            CallbackQueryHandler(handle_writing_check_callback, pattern=r'^writing_check$'),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$'),
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_topic_and_generate_writing)
         ],
         GET_WRITING_SUBMISSION: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_submission),
+        ],
+        GET_WRITING_CHECK_TASK: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_check_task_input),
+        ],
+        GET_WRITING_CHECK_ESSAY: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_check_essay_input),
         ],
     },
     fallbacks=[CommandHandler("cancel", cancel)],
@@ -985,6 +1071,7 @@ vocabulary_conversation_handler = ConversationHandler(
     states={
         GET_VOCABULARY_TOPIC: [
             CallbackQueryHandler(handle_vocabulary_choice_callback, pattern=r'^vocabulary_(random|topic)$'),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$'),
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_topic_and_generate_vocabulary)
         ],
     },
@@ -992,3 +1079,51 @@ vocabulary_conversation_handler = ConversationHandler(
     name="vocabulary_conversation",
     persistent=False
 )
+
+async def handle_writing_task_type_global(update: Update, context: CallbackContext) -> None:
+    """Handle writing task type selection - for global handler (menu-based access)"""
+    user = update.effective_user
+    
+    query = update.callback_query
+    await query.answer()
+    task_type_choice = query.data.split('_')[-1]
+    context.user_data['selected_writing_task_type'] = f"Task {task_type_choice}"
+    context.user_data['waiting_for_writing_topic'] = True
+    logger.info(f"🎯 User {update.effective_user.id} selected writing task type: {context.user_data['selected_writing_task_type']} (global)")
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад к письму", callback_data="menu_writing")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        f"✅ Вы выбрали {context.user_data['selected_writing_task_type']}. Теперь, пожалуйста, расскажите мне тему для вашего письменного задания.",
+        reply_markup=reply_markup
+    )
+
+async def handle_writing_check_global(update: Update, context: CallbackContext) -> None:
+    """Handle the 'Check Essay' button press - for global handler (menu-based access)"""
+    user = update.effective_user
+    
+    query = update.callback_query
+    await query.answer()
+    
+    # End any existing conversation
+    if context.user_data.get('waiting_for_writing_topic'):
+        context.user_data.pop('waiting_for_writing_topic', None)
+    if context.user_data.get('selected_writing_task_type'):
+        context.user_data.pop('selected_writing_task_type', None)
+    if context.user_data.get('current_writing_topic'):
+        context.user_data.pop('current_writing_topic', None)
+    
+    # Set the user in writing check task mode
+    context.user_data['waiting_for_writing_check_task'] = True
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад к письму", callback_data="menu_writing")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        "📝 Для проверки вашего письма мне нужна информация о задании.\n\n"
+        "Пожалуйста, опишите задание IELTS Writing Task, которое вы выполняли.\n"
+        "Например: 'Напишите эссе о преимуществах и недостатках социальных сетей'",
+        reply_markup=reply_markup
+    )

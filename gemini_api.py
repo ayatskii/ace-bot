@@ -244,9 +244,9 @@ def evaluate_writing(writing_text: str, task_description: str) -> str:
     📝 Examiner's General Comments:
     [Your brief summary of the essay's overall performance]
 
-    ────────────────────────────
+    ────────────────────
     📋 DETAILED CRITERION-BASED ASSESSMENT
-    ────────────────────────────
+    ────────────────────
 
     📌 Task Response (TR): Band [Score]
     💬 Justification: [Your detailed justification]
@@ -260,9 +260,9 @@ def evaluate_writing(writing_text: str, task_description: str) -> str:
     📌 Grammatical Range & Accuracy (GRA): Band [Score]
     💬 Justification: [Your detailed justification]
 
-    ────────────────────────────
+    ────────────────────
     🎯 KEY STRENGTHS & ACTIONABLE RECOMMENDATIONS
-    ────────────────────────────
+    ────────────────────
 
     ✅ What You Did Well:
     • [Strength 1]
