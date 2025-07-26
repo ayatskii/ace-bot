@@ -21,9 +21,7 @@ def initialize_gemini():
         generation_config = genai.GenerationConfig(
             temperature=0.9,
             top_p=0.95,
-            top_k=50,
-            max_output_tokens=800,
-            stop_sequences=['\n\n\n']
+            top_k=50
         )
         
         model = genai.GenerativeModel(
@@ -35,8 +33,7 @@ def initialize_gemini():
         writing_config = genai.GenerationConfig(
             temperature=0.7,
             top_p=0.8,
-            top_k=40,
-            max_output_tokens=1200
+            top_k=40
         )
         
         writing_model = genai.GenerativeModel(
@@ -51,33 +48,88 @@ def initialize_gemini():
         raise
 
 
-def generate_text(prompt: str) -> str:
-    """Sends a prompt to the initialized Gemini model and returns the text response."""
+def generate_text_with_retry(prompt: str, max_retries: int = 3, base_delay: float = 1.0) -> str:
+    """Sends a prompt to the initialized Gemini model with retry logic for empty responses."""
     if not model:
         logger.error("🔥 Gemini model not initialized. Call initialize_gemini() first.")
         return "Error: The AI model is not available. Please contact the administrator."
 
-    try:
-        logger.info(f"➡️ Sending prompt to Gemini: '{prompt[:80]}...'")
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        logger.error(f"🔥 An error occurred while generating text with Gemini: {e}")
-        return "Sorry, I encountered an error while processing your request."
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"➡️ Sending prompt to Gemini (attempt {attempt + 1}/{max_retries}): '{prompt[:80]}...'")
+            response = model.generate_content(prompt)
+            response_text = response.text.strip()
+            
+            # Check if response is empty or too short
+            if not response_text or len(response_text) < 10:
+                logger.warning(f"⚠️ Empty or too short response received (attempt {attempt + 1}): '{response_text[:100]}...'")
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    logger.info(f"🔄 Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                    continue
+                else:
+                    logger.error(f"🔥 All {max_retries} attempts failed to get a valid response")
+                    return "Sorry, I couldn't generate a proper response. Please try again."
+            
+            logger.info(f"✅ Successfully generated response on attempt {attempt + 1}")
+            return response_text
+            
+        except Exception as e:
+            logger.error(f"🔥 An error occurred while generating text with Gemini (attempt {attempt + 1}): {e}")
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)  # Exponential backoff
+                logger.info(f"🔄 Retrying in {delay} seconds...")
+                time.sleep(delay)
+            else:
+                return "Sorry, I encountered an error while processing your request."
 
-def generate_writing_text(prompt: str) -> str:
-    """Sends a prompt to the writing-specific Gemini model and returns the text response."""
+
+def generate_text(prompt: str) -> str:
+    """Sends a prompt to the initialized Gemini model and returns the text response."""
+    return generate_text_with_retry(prompt)
+
+
+def generate_writing_text_with_retry(prompt: str, max_retries: int = 3, base_delay: float = 1.0) -> str:
+    """Sends a prompt to the writing-specific Gemini model with retry logic for empty responses."""
     if not writing_model:
         logger.error("🔥 Writing Gemini model not initialized. Call initialize_gemini() first.")
         return "Error: The AI model is not available. Please contact the administrator."
 
-    try:
-        logger.info(f"➡️ Sending writing prompt to Gemini Pro: '{prompt[:80]}...'")
-        response = writing_model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        logger.error(f"🔥 An error occurred while generating writing text with Gemini Pro: {e}")
-        return "Sorry, I encountered an error while processing your writing evaluation."
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"➡️ Sending writing prompt to Gemini Pro (attempt {attempt + 1}/{max_retries}): '{prompt[:80]}...'")
+            response = writing_model.generate_content(prompt)
+            response_text = response.text.strip()
+            
+            # Check if response is empty or too short
+            if not response_text or len(response_text) < 10:
+                logger.warning(f"⚠️ Empty or too short writing response received (attempt {attempt + 1}): '{response_text[:100]}...'")
+                if attempt < max_retries - 1:
+                    delay = base_delay * (2 ** attempt)  # Exponential backoff
+                    logger.info(f"🔄 Retrying writing generation in {delay} seconds...")
+                    time.sleep(delay)
+                    continue
+                else:
+                    logger.error(f"🔥 All {max_retries} attempts failed to get a valid writing response")
+                    return "Sorry, I couldn't generate a proper writing evaluation. Please try again."
+            
+            logger.info(f"✅ Successfully generated writing response on attempt {attempt + 1}")
+            return response_text
+            
+        except Exception as e:
+            logger.error(f"🔥 An error occurred while generating writing text with Gemini Pro (attempt {attempt + 1}): {e}")
+            if attempt < max_retries - 1:
+                delay = base_delay * (2 ** attempt)  # Exponential backoff
+                logger.info(f"🔄 Retrying writing generation in {delay} seconds...")
+                time.sleep(delay)
+            else:
+                return "Sorry, I encountered an error while processing your writing evaluation."
+
+
+def generate_writing_text(prompt: str) -> str:
+    """Sends a prompt to the writing-specific Gemini model and returns the text response."""
+    return generate_writing_text_with_retry(prompt)
 
 def get_random_word_details(word_level="IELTS Band 7-9 (C1/C2)") -> str:
     entropy_sources = [

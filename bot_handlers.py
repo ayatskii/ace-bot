@@ -801,8 +801,12 @@ async def get_grammar_topic(update: Update, context: CallbackContext) -> int:
     logger.info(f"🔍 Formatted explanation: {formatted_explanation[:200]}...")
     
     reply_markup = None
-    # Use HTML parse mode for better formatting
-    await send_long_message(update, context, formatted_explanation, reply_markup, parse_mode='HTML')
+    # Check if the explanation is empty
+    if not formatted_explanation.strip():
+        await update.message.reply_text("❌ Sorry, I couldn't generate an explanation for this grammar topic.")
+    else:
+        # Use HTML parse mode for better formatting
+        await send_long_message(update, context, formatted_explanation, reply_markup, parse_mode='HTML')
     logger.info(f"✅ Grammar explanation generated for user {update.effective_user.id}, ending conversation")
     await menu_command(update, context, force_new_message=True)
     return ConversationHandler.END
@@ -822,8 +826,12 @@ async def handle_grammar_topic_input(update: Update, context: CallbackContext) -
     logger.info(f"🔍 Formatted explanation: {formatted_explanation[:200]}...")
     
     reply_markup = None
-    # Use HTML parse mode for better formatting
-    await send_long_message(update, context, formatted_explanation, reply_markup, parse_mode='HTML')
+    # Check if the explanation is empty
+    if not formatted_explanation.strip():
+        await update.message.reply_text("❌ Sorry, I couldn't generate an explanation for this grammar topic.")
+    else:
+        # Use HTML parse mode for better formatting
+        await send_long_message(update, context, formatted_explanation, reply_markup, parse_mode='HTML')
     logger.info(f"✅ Grammar explanation generated for user {update.effective_user.id}")
     await menu_command(update, context, force_new_message=True)
 
