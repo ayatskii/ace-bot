@@ -34,6 +34,9 @@ class DatabaseManager:
                     )
                 ''')
                 
+                # Add missing columns if they don't exist (migration)
+                self._migrate_users_table(cursor)
+                
                 # Create user_words table to store saved vocabulary
                 cursor.execute('''
                     CREATE TABLE IF NOT EXISTS user_words (
@@ -56,6 +59,41 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"🔥 Failed to initialize database: {e}")
             raise
+    
+    def _migrate_users_table(self, cursor):
+        """Migrate existing users table to add new admin columns"""
+        try:
+            # Check if columns exist by trying to select them
+            try:
+                cursor.execute("SELECT is_active FROM users LIMIT 1")
+            except sqlite3.OperationalError:
+                # Column doesn't exist, add it
+                cursor.execute("ALTER TABLE users ADD COLUMN is_active BOOLEAN DEFAULT 1")
+                logger.info("✅ Added is_active column to users table")
+            
+            try:
+                cursor.execute("SELECT is_blocked FROM users LIMIT 1")
+            except sqlite3.OperationalError:
+                # Column doesn't exist, add it
+                cursor.execute("ALTER TABLE users ADD COLUMN is_blocked BOOLEAN DEFAULT 0")
+                logger.info("✅ Added is_blocked column to users table")
+            
+            try:
+                cursor.execute("SELECT blocked_at FROM users LIMIT 1")
+            except sqlite3.OperationalError:
+                # Column doesn't exist, add it
+                cursor.execute("ALTER TABLE users ADD COLUMN blocked_at TIMESTAMP")
+                logger.info("✅ Added blocked_at column to users table")
+            
+            try:
+                cursor.execute("SELECT blocked_by FROM users LIMIT 1")
+            except sqlite3.OperationalError:
+                # Column doesn't exist, add it
+                cursor.execute("ALTER TABLE users ADD COLUMN blocked_by INTEGER")
+                logger.info("✅ Added blocked_by column to users table")
+                
+        except Exception as e:
+            logger.error(f"🔥 Failed to migrate users table: {e}")
     
     def add_user(self, user_id: int, username: str = None, first_name: str = None, last_name: str = None) -> bool:
         """Add or update user information"""
