@@ -25,12 +25,22 @@ def check_user_access(user_id: int) -> bool:
     if db.is_user_blocked(user_id):
         return False
     
+    # Admins always have access (even if not in whitelist)
+    if is_admin(user_id):
+        return True
+    
     # If whitelist is enabled, check if user is authorized
     if config.ENABLE_WHITELIST:
         return user_id in config.AUTHORIZED_USER_IDS
     
     # If whitelist is disabled, allow all non-blocked users
     return True
+
+def check_username_access(username: str) -> bool:
+    """Check if username has access to the bot"""
+    if not username or not config.ENABLE_WHITELIST:
+        return False
+    return username.lower() in [u.lower() for u in config.AUTHORIZED_USERNAMES]
 
 async def send_access_denied_message(update: Update, context: CallbackContext) -> None:
     """Send access denied message to blocked users"""
@@ -400,8 +410,11 @@ async def start_command(update: Update, context: CallbackContext) -> None:
         last_name=user.last_name
     )
     
-    # Check user access
-    if not check_user_access(user.id):
+    # Check user access (ID or username)
+    has_id_access = check_user_access(user.id)
+    has_username_access = check_username_access(user.username) if user.username else False
+    
+    if not (has_id_access or has_username_access):
         await send_access_denied_message(update, context)
         return
     
@@ -1727,6 +1740,75 @@ async def admin_delete_user_command(update: Update, context: CallbackContext) ->
             
     except (ValueError, IndexError):
         await update.message.reply_text("❌ Неверный формат команды. Используйте: /delete_<user_id>")
+
+@require_admin
+async def admin_add_user_command(update: Update, context: CallbackContext) -> None:
+    """Handle /adduser_<user_id> command"""
+    command_text = update.message.text
+    try:
+        target_user_id = int(command_text.split('_')[1])
+        
+        # Add to whitelist programmatically (for session only)
+        if target_user_id not in config.AUTHORIZED_USER_IDS:
+            config.AUTHORIZED_USER_IDS.append(target_user_id)
+            await update.message.reply_text(
+                f"✅ Пользователь {target_user_id} добавлен в whitelist!\n"
+                f"⚠️ Чтобы сохранить навсегда, добавьте его ID в config.py"
+            )
+        else:
+            await update.message.reply_text(f"⚠️ Пользователь {target_user_id} уже в whitelist!")
+            
+    except (ValueError, IndexError):
+        await update.message.reply_text("❌ Неверный формат команды. Используйте: /adduser_<user_id>")
+
+@require_admin
+async def admin_remove_user_command(update: Update, context: CallbackContext) -> None:
+    """Handle /removeuser_<user_id> command"""
+    command_text = update.message.text
+    try:
+        target_user_id = int(command_text.split('_')[1])
+        
+        if target_user_id == update.effective_user.id:
+            await update.message.reply_text("❌ Вы не можете удалить себя из whitelist!")
+            return
+        
+        # Remove from whitelist programmatically (for session only)
+        if target_user_id in config.AUTHORIZED_USER_IDS:
+            config.AUTHORIZED_USER_IDS.remove(target_user_id)
+            await update.message.reply_text(
+                f"✅ Пользователь {target_user_id} удален из whitelist!\n"
+                f"⚠️ Чтобы сохранить навсегда, удалите его ID из config.py"
+            )
+        else:
+            await update.message.reply_text(f"⚠️ Пользователь {target_user_id} не найден в whitelist!")
+            
+    except (ValueError, IndexError):
+        await update.message.reply_text("❌ Неверный формат команды. Используйте: /removeuser_<user_id>")
+
+@require_admin
+async def admin_whitelist_status_command(update: Update, context: CallbackContext) -> None:
+    """Handle /whitelist command - show whitelist status"""
+    status_text = f"🔐 <b>Статус Whitelist</b>\n\n"
+    status_text += f"📊 Состояние: {'🟢 Включен' if config.ENABLE_WHITELIST else '🔴 Выключен'}\n"
+    status_text += f"👥 Авторизованных пользователей: {len(config.AUTHORIZED_USER_IDS)}\n"
+    status_text += f"🏷️ Авторизованных usernames: {len(config.AUTHORIZED_USERNAMES)}\n\n"
+    
+    if config.AUTHORIZED_USER_IDS:
+        status_text += f"📋 <b>ID пользователей:</b>\n"
+        for user_id in config.AUTHORIZED_USER_IDS:
+            admin_mark = " (Админ)" if is_admin(user_id) else ""
+            status_text += f"• {user_id}{admin_mark}\n"
+    
+    if config.AUTHORIZED_USERNAMES:
+        status_text += f"\n📋 <b>Usernames:</b>\n"
+        for username in config.AUTHORIZED_USERNAMES:
+            status_text += f"• @{username}\n"
+    
+    status_text += f"\n💡 <b>Управление:</b>\n"
+    status_text += f"• /adduser_123456 - Добавить пользователя\n"
+    status_text += f"• /removeuser_123456 - Удалить пользователя\n"
+    
+    await update.message.reply_text(status_text, parse_mode='HTML')
 
 async def handle_writing_check_global(update: Update, context: CallbackContext) -> None:
     """Handle the 'Check Essay' button press - for global handler (menu-based access)"""

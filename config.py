@@ -10,23 +10,25 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 # Gemini API Key
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
-# Whitelist Configuration (DISABLED)
+# Whitelist Configuration (ENABLED)
 # Add user IDs of authorized users here
 AUTHORIZED_USER_IDS = [
     # Add your Telegram user ID here
     # You can get your user ID by sending /start to @userinfobot
-    # Example: 123456789,
+    546321644,  # Your admin ID (already has access)
+    # 8041304532,  # Example: Add Ильяс
+    # 123456789,   # Example: Add another user
 ]
 
 # Add usernames of authorized users here (without @ symbol)
 AUTHORIZED_USERNAMES = [
     # Add usernames here (without @ symbol)
-    # Example: "john_doe",
-    # Example: "jane_smith",
+    # "ayatskii",     # Example: Your username
+    # "username",     # Example: Another username
 ]
 
 # Optional: Enable/disable whitelist
-ENABLE_WHITELIST = False  # Set to False to allow all users
+ENABLE_WHITELIST = True  # Set to True to allow only authorized users
 
 # Admin Configuration
 ADMIN_USER_IDS = [

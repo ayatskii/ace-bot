@@ -40,10 +40,14 @@ def main():
     # --- Admin Command Handlers ---
     application.add_handler(CommandHandler("admin", bot_handlers.admin_command))
     application.add_handler(CommandHandler("testdb", bot_handlers.test_db_command))  # Debug command
+    application.add_handler(CommandHandler("whitelist", bot_handlers.admin_whitelist_status_command))  # Whitelist status
     # Dynamic admin commands for user management
     application.add_handler(MessageHandler(filters.Regex(r'^/block_\d+$'), bot_handlers.admin_block_user_command))
     application.add_handler(MessageHandler(filters.Regex(r'^/unblock_\d+$'), bot_handlers.admin_unblock_user_command))
     application.add_handler(MessageHandler(filters.Regex(r'^/delete_\d+$'), bot_handlers.admin_delete_user_command))
+    # Whitelist management commands
+    application.add_handler(MessageHandler(filters.Regex(r'^/adduser_\d+$'), bot_handlers.admin_add_user_command))
+    application.add_handler(MessageHandler(filters.Regex(r'^/removeuser_\d+$'), bot_handlers.admin_remove_user_command))
     
     logger.info("✅ Command handlers registered.")
 
