@@ -14,6 +14,67 @@ from gemini_api import (
 
 logger = logging.getLogger(__name__)
 
+# --- Admin Utility Functions ---
+def is_admin(user_id: int) -> bool:
+    """Check if user is an admin"""
+    return user_id in config.ADMIN_USER_IDS and config.ENABLE_ADMIN_PANEL
+
+def check_user_access(user_id: int) -> bool:
+    """Check if user has access to the bot"""
+    # If user is blocked, deny access
+    if db.is_user_blocked(user_id):
+        return False
+    
+    # If whitelist is enabled, check if user is authorized
+    if config.ENABLE_WHITELIST:
+        return user_id in config.AUTHORIZED_USER_IDS
+    
+    # If whitelist is disabled, allow all non-blocked users
+    return True
+
+async def send_access_denied_message(update: Update, context: CallbackContext) -> None:
+    """Send access denied message to blocked users"""
+    user = update.effective_user
+    
+    if db.is_user_blocked(user.id):
+        await update.message.reply_text(
+            "🚫 <b>Доступ заблокирован</b>\n\n"
+            "Ваш доступ к боту был ограничен администратором.\n"
+            "Если вы считаете, что это ошибка, обратитесь к администратору.",
+            parse_mode='HTML'
+        )
+    else:
+        await update.message.reply_text(
+            "🚫 <b>Доступ ограничен</b>\n\n"
+            "У вас нет доступа к этому боту.\n"
+            "Обратитесь к администратору для получения доступа.",
+            parse_mode='HTML'
+        )
+
+def require_access(func):
+    """Decorator to check user access before executing function"""
+    async def wrapper(update: Update, context: CallbackContext, *args, **kwargs):
+        user = update.effective_user
+        if not check_user_access(user.id):
+            await send_access_denied_message(update, context)
+            return
+        return await func(update, context, *args, **kwargs)
+    return wrapper
+
+def require_admin(func):
+    """Decorator to check admin access before executing function"""
+    async def wrapper(update: Update, context: CallbackContext, *args, **kwargs):
+        user = update.effective_user
+        if not is_admin(user.id):
+            await update.message.reply_text(
+                "🚫 <b>Доступ запрещен</b>\n\n"
+                "Эта функция доступна только администраторам.",
+                parse_mode='HTML'
+            )
+            return
+        return await func(update, context, *args, **kwargs)
+    return wrapper
+
 # --- Utility Functions for Word Parsing ---
 def parse_word_details(word_details: str) -> dict:
     """Parse word details from Gemini API response"""
@@ -331,7 +392,7 @@ async def setup_bot_menu_button(context: CallbackContext) -> None:
 async def start_command(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
     
-    # Add user to database
+    # Add user to database (always add, access control happens later)
     db.add_user(
         user_id=user.id,
         username=user.username,
@@ -339,12 +400,22 @@ async def start_command(update: Update, context: CallbackContext) -> None:
         last_name=user.last_name
     )
     
+    # Check user access
+    if not check_user_access(user.id):
+        await send_access_denied_message(update, context)
+        return
+    
     welcome_message = (f"👋 Привет, {user.first_name}!\n\nЯ ваш помощник по подготовке к IELTS...")
     
     keyboard = [
         [InlineKeyboardButton("📋 Меню", callback_data="menu_help")],
         [InlineKeyboardButton("❓ Помощь", callback_data="help_button")],
     ]
+    
+    # Add admin panel button for admins
+    if is_admin(user.id):
+        keyboard.append([InlineKeyboardButton("⚙️ Админ-панель", callback_data="admin_panel")])
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(welcome_message, reply_markup=reply_markup)
@@ -1087,6 +1158,13 @@ async def handle_global_text_input(update: Update, context: CallbackContext) -> 
         await handle_writing_check_essay_input(update, context)
         return
     
+    # Check if admin is searching for users
+    if context.user_data.get('waiting_for_admin_search'):
+        logger.info(f"🔍 Admin {user.id} is searching for users")
+        context.user_data.pop('waiting_for_admin_search', None)
+        await handle_admin_search_input(update, context)
+        return
+    
     # If not in any specific mode, ignore the text
     # This prevents the global handler from interfering with conversation handlers
     logger.info(f"❌ User {user.id} not in any specific mode, ignoring text input")
@@ -1334,6 +1412,236 @@ async def handle_confirm_clear_vocabulary(update: Update, context: CallbackConte
                 [InlineKeyboardButton("🔙 Назад к профилю", callback_data="menu_profile")],
             ])
         )
+
+# === ADMIN FUNCTIONS ===
+
+@require_admin
+async def admin_command(update: Update, context: CallbackContext) -> None:
+    """Handle /admin command"""
+    await show_admin_panel(update, context)
+
+async def show_admin_panel(update: Update, context: CallbackContext) -> None:
+    """Show the main admin panel"""
+    user = update.effective_user
+    stats = db.get_user_stats()
+    
+    admin_text = f"⚙️ <b>Админ-панель</b>\n\n"
+    admin_text += f"👤 Администратор: {user.first_name}\n"
+    admin_text += f"🆔 ID: {user.id}\n\n"
+    admin_text += f"📊 <b>Статистика:</b>\n"
+    admin_text += f"• Всего пользователей: {stats.get('total_users', 0)}\n"
+    admin_text += f"• Активных: {stats.get('active_users', 0)}\n"
+    admin_text += f"• Заблокированных: {stats.get('blocked_users', 0)}\n"
+    admin_text += f"• С сохраненными словами: {stats.get('users_with_words', 0)}\n"
+    admin_text += f"• Всего слов в базе: {stats.get('total_words', 0)}\n"
+    admin_text += f"• Новых за сегодня: {stats.get('new_users_today', 0)}\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("👥 Управление пользователями", callback_data="admin_users")],
+        [InlineKeyboardButton("🔍 Поиск пользователя", callback_data="admin_search")],
+        [InlineKeyboardButton("📊 Подробная статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if update.callback_query:
+        await update.callback_query.edit_message_text(admin_text, reply_markup=reply_markup, parse_mode='HTML')
+    else:
+        await update.message.reply_text(admin_text, reply_markup=reply_markup, parse_mode='HTML')
+
+async def handle_admin_panel_callback(update: Update, context: CallbackContext) -> None:
+    """Handle admin panel button clicks"""
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_admin(update.effective_user.id):
+        await query.edit_message_text("🚫 Доступ запрещен.")
+        return
+    
+    await show_admin_panel(update, context)
+
+async def handle_admin_users(update: Update, context: CallbackContext) -> None:
+    """Show user management panel"""
+    query = update.callback_query
+    await query.answer()
+    
+    users = db.get_all_users(limit=10)
+    
+    users_text = f"👥 <b>Управление пользователями</b>\n\n"
+    
+    if not users:
+        users_text += "📝 Пользователи не найдены.\n"
+    else:
+        for user_id, username, first_name, last_name, is_active, is_blocked, created_at, last_activity in users:
+            status_emoji = "🚫" if is_blocked else "✅"
+            name = first_name or "Без имени"
+            if last_name:
+                name += f" {last_name}"
+            username_text = f"@{username}" if username else "Без username"
+            
+            users_text += f"{status_emoji} <b>{name}</b>\n"
+            users_text += f"🆔 {user_id} | {username_text}\n"
+            users_text += f"📅 Регистрация: {created_at[:10]}\n\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("🔍 Поиск пользователя", callback_data="admin_search")],
+        [InlineKeyboardButton("📋 Показать больше", callback_data="admin_users_more")],
+        [InlineKeyboardButton("🔙 Назад к админ-панели", callback_data="admin_panel")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await send_long_message(update, context, users_text, reply_markup, parse_mode='HTML')
+
+async def handle_admin_search(update: Update, context: CallbackContext) -> None:
+    """Handle admin search request"""
+    query = update.callback_query
+    await query.answer()
+    
+    context.user_data['waiting_for_admin_search'] = True
+    
+    search_text = "🔍 <b>Поиск пользователя</b>\n\n"
+    search_text += "Введите один из параметров для поиска:\n"
+    search_text += "• Telegram ID (например: 123456789)\n"
+    search_text += "• Username (например: @username или username)\n"
+    search_text += "• Имя пользователя\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("❌ Отмена", callback_data="admin_users")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(search_text, reply_markup=reply_markup, parse_mode='HTML')
+
+async def handle_admin_search_input(update: Update, context: CallbackContext) -> None:
+    """Handle admin search input"""
+    user = update.effective_user
+    
+    if not is_admin(user.id):
+        return
+    
+    query = update.message.text.strip()
+    context.user_data.pop('waiting_for_admin_search', None)
+    
+    # Clean username query
+    if query.startswith('@'):
+        query = query[1:]
+    
+    users = db.search_users(query)
+    
+    search_text = f"🔍 <b>Результаты поиска: '{query}'</b>\n\n"
+    
+    if not users:
+        search_text += "📝 Пользователи не найдены.\n"
+        keyboard = [
+            [InlineKeyboardButton("🔍 Новый поиск", callback_data="admin_search")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin_users")],
+        ]
+    else:
+        for user_id, username, first_name, last_name, is_active, is_blocked, created_at, last_activity in users:
+            status_emoji = "🚫" if is_blocked else "✅"
+            name = first_name or "Без имени"
+            if last_name:
+                name += f" {last_name}"
+            username_text = f"@{username}" if username else "Без username"
+            
+            search_text += f"{status_emoji} <b>{name}</b>\n"
+            search_text += f"🆔 {user_id} | {username_text}\n"
+            search_text += f"📅 {created_at[:10]} | 🕒 {last_activity[:10]}\n"
+            
+            # Add management buttons for each user
+            vocab_count = db.get_user_vocabulary_count(user_id)
+            search_text += f"📚 Словарь: {vocab_count} слов\n"
+            search_text += f"Действия: /block_{user_id} | /unblock_{user_id} | /delete_{user_id}\n\n"
+        
+        keyboard = [
+            [InlineKeyboardButton("🔍 Новый поиск", callback_data="admin_search")],
+            [InlineKeyboardButton("🔙 Назад", callback_data="admin_users")],
+        ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await send_long_message(update, context, search_text, reply_markup, parse_mode='HTML')
+
+@require_admin
+async def admin_block_user_command(update: Update, context: CallbackContext) -> None:
+    """Handle /block_<user_id> command"""
+    command_text = update.message.text
+    try:
+        target_user_id = int(command_text.split('_')[1])
+        admin_id = update.effective_user.id
+        
+        if target_user_id == admin_id:
+            await update.message.reply_text("❌ Вы не можете заблокировать себя!")
+            return
+        
+        if is_admin(target_user_id):
+            await update.message.reply_text("❌ Вы не можете заблокировать другого администратора!")
+            return
+        
+        success = db.block_user(target_user_id, admin_id)
+        
+        if success:
+            await update.message.reply_text(f"✅ Пользователь {target_user_id} заблокирован.")
+        else:
+            await update.message.reply_text(f"❌ Не удалось заблокировать пользователя {target_user_id}.")
+            
+    except (ValueError, IndexError):
+        await update.message.reply_text("❌ Неверный формат команды. Используйте: /block_<user_id>")
+
+@require_admin
+async def admin_unblock_user_command(update: Update, context: CallbackContext) -> None:
+    """Handle /unblock_<user_id> command"""
+    command_text = update.message.text
+    try:
+        target_user_id = int(command_text.split('_')[1])
+        
+        success = db.unblock_user(target_user_id)
+        
+        if success:
+            await update.message.reply_text(f"✅ Пользователь {target_user_id} разблокирован.")
+        else:
+            await update.message.reply_text(f"❌ Не удалось разблокировать пользователя {target_user_id}.")
+            
+    except (ValueError, IndexError):
+        await update.message.reply_text("❌ Неверный формат команды. Используйте: /unblock_<user_id>")
+
+@require_admin 
+async def admin_delete_user_command(update: Update, context: CallbackContext) -> None:
+    """Handle /delete_<user_id> command"""
+    command_text = update.message.text
+    try:
+        target_user_id = int(command_text.split('_')[1])
+        admin_id = update.effective_user.id
+        
+        if target_user_id == admin_id:
+            await update.message.reply_text("❌ Вы не можете удалить себя!")
+            return
+        
+        if is_admin(target_user_id):
+            await update.message.reply_text("❌ Вы не можете удалить другого администратора!")
+            return
+        
+        # Get user info before deletion
+        user_info = db.get_user_info(target_user_id)
+        if not user_info:
+            await update.message.reply_text(f"❌ Пользователь {target_user_id} не найден.")
+            return
+        
+        vocab_count = db.get_user_vocabulary_count(target_user_id)
+        success = db.delete_user(target_user_id)
+        
+        if success:
+            name = user_info[2] or "Без имени"
+            await update.message.reply_text(
+                f"✅ Пользователь удален:\n"
+                f"🆔 {target_user_id}\n"
+                f"👤 {name}\n"
+                f"📚 Удалено слов: {vocab_count}"
+            )
+        else:
+            await update.message.reply_text(f"❌ Не удалось удалить пользователя {target_user_id}.")
+            
+    except (ValueError, IndexError):
+        await update.message.reply_text("❌ Неверный формат команды. Используйте: /delete_<user_id>")
 
 async def handle_writing_check_global(update: Update, context: CallbackContext) -> None:
     """Handle the 'Check Essay' button press - for global handler (menu-based access)"""

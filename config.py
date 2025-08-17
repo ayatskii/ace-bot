@@ -28,6 +28,14 @@ AUTHORIZED_USERNAMES = [
 # Optional: Enable/disable whitelist
 ENABLE_WHITELIST = False  # Set to False to allow all users
 
+# Admin Configuration
+ADMIN_USER_IDS = [
+    546321644, 
+]
+
+# Admin Features
+ENABLE_ADMIN_PANEL = True  # Set to False to disable admin features
+
 ROLE_PROMPT = f"""
 You are an elite IELTS tutor and language assessment expert. Your personal, certified IELTS score is 9.0 in all modules, and your students consistently achieve a minimum of Band 8.0 on the official exam. You possess a comprehensive and deep understanding of the official IELTS assessment criteria, including the public band descriptors for Writing Task 2.[3, 4]
 

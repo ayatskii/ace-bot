@@ -36,6 +36,14 @@ def main():
     application.add_handler(CommandHandler("menu", bot_handlers.menu_command))
     application.add_handler(CommandHandler("speaking", bot_handlers.handle_speaking_command))
     application.add_handler(CommandHandler("info", bot_handlers.handle_info_command))
+    
+    # --- Admin Command Handlers ---
+    application.add_handler(CommandHandler("admin", bot_handlers.admin_command))
+    # Dynamic admin commands for user management
+    application.add_handler(MessageHandler(filters.Regex(r'^/block_\d+$'), bot_handlers.admin_block_user_command))
+    application.add_handler(MessageHandler(filters.Regex(r'^/unblock_\d+$'), bot_handlers.admin_unblock_user_command))
+    application.add_handler(MessageHandler(filters.Regex(r'^/delete_\d+$'), bot_handlers.admin_delete_user_command))
+    
     logger.info("✅ Command handlers registered.")
 
     # --- Global Text Input Handlers (for topic selection) ---
@@ -57,6 +65,11 @@ def main():
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_profile_vocabulary, pattern=r'^profile_vocabulary$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_clear_vocabulary, pattern=r'^clear_vocabulary$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_confirm_clear_vocabulary, pattern=r'^confirm_clear_vocabulary$'))
+    
+    # Add handlers for admin features
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_panel_callback, pattern=r'^admin_panel$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_users, pattern=r'^admin_users$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_search, pattern=r'^admin_search$'))
     
     logger.info("✅ Callback query handlers registered.")
 
