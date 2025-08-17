@@ -187,8 +187,16 @@ class DatabaseManager:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute('SELECT COUNT(*) FROM user_words WHERE user_id = ?', (user_id,))
-                count = cursor.fetchone()[0]
-                return count
+                result = cursor.fetchone()
+                count = result[0] if result and result[0] is not None else 0
+                return int(count)
+        except sqlite3.OperationalError as e:
+            if "no such table" in str(e).lower():
+                logger.warning(f"⚠️ user_words table doesn't exist yet for user {user_id}")
+                return 0
+            else:
+                logger.error(f"🔥 Database error getting vocabulary count for user {user_id}: {e}")
+                return 0
         except Exception as e:
             logger.error(f"🔥 Failed to get vocabulary count for user {user_id}: {e}")
             return 0
@@ -217,10 +225,17 @@ class DatabaseManager:
                            created_at, last_activity, blocked_at, blocked_by
                     FROM users WHERE user_id = ?
                 ''', (user_id,))
-                return cursor.fetchone()
+                result = cursor.fetchone()
+                if result:
+                    logger.info(f"✅ Retrieved user info for {user_id}: {len(result)} fields")
+                    return result
+                else:
+                    logger.warning(f"⚠️ User {user_id} not found in database")
+                    return None
         except Exception as e:
             logger.error(f"🔥 Failed to get user info for {user_id}: {e}")
-            return None
+            # Return basic info if database query fails
+            return (user_id, None, None, None, 1, 0, None, None, None, None)
 
     # === ADMIN FUNCTIONS ===
     

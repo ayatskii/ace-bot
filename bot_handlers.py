@@ -532,26 +532,64 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
         await query.edit_message_text("ℹ️ Choose the specific IELTS task type you want strategies for:", reply_markup=reply_markup)
         
     elif data == "menu_profile":
-        # Handle profile menu selection
-        user_info = db.get_user_info(user.id)
-        vocabulary_count = db.get_user_vocabulary_count(user.id)
+        # Handle profile menu selection - simplified and robust version
+        logger.info(f"👤 Profile menu requested by user {user.id}")
         
-        profile_text = f"👤 <b>Мой профиль</b>\n\n"
-        profile_text += f"🆔 ID: {user.id}\n"
-        profile_text += f"👋 Имя: {user.first_name}"
-        if user.last_name:
-            profile_text += f" {user.last_name}"
-        profile_text += f"\n📚 Слов в словаре: {vocabulary_count}"
-        
-        if user_info:
-            profile_text += f"\n📅 Дата регистрации: {user_info[4][:10]}"
-        
-        keyboard = [
-            [InlineKeyboardButton("📖 Мой словарь", callback_data="profile_vocabulary")],
-            [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text(profile_text, reply_markup=reply_markup, parse_mode='HTML')
+        try:
+            # Get vocabulary count safely
+            try:
+                vocabulary_count = db.get_user_vocabulary_count(user.id)
+                logger.info(f"✅ Vocabulary count for user {user.id}: {vocabulary_count}")
+            except Exception as e:
+                logger.error(f"🔥 Failed to get vocabulary count: {e}")
+                vocabulary_count = 0
+            
+            # Build profile text with basic info (always available)
+            profile_text = f"👤 <b>Мой профиль</b>\n\n"
+            profile_text += f"🆔 ID: {user.id}\n"
+            profile_text += f"👋 Имя: {user.first_name or 'Не указано'}"
+            if user.last_name:
+                profile_text += f" {user.last_name}"
+            if user.username:
+                profile_text += f"\n📧 Username: @{user.username}"
+            profile_text += f"\n📚 Слов в словаре: {vocabulary_count}"
+            
+            # Try to get registration date (optional)
+            try:
+                user_info = db.get_user_info(user.id)
+                logger.info(f"✅ User info retrieved: {user_info is not None}")
+                if user_info and len(user_info) > 6 and user_info[6]:
+                    created_at = str(user_info[6])
+                    if len(created_at) >= 10:
+                        profile_text += f"\n📅 Дата регистрации: {created_at[:10]}"
+                    else:
+                        profile_text += f"\n📅 Регистрация: {created_at}"
+            except Exception as e:
+                logger.warning(f"⚠️ Could not get registration date: {e}")
+                # This is optional, so we continue without it
+            
+            keyboard = [
+                [InlineKeyboardButton("📖 Мой словарь", callback_data="profile_vocabulary")],
+                [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(profile_text, reply_markup=reply_markup, parse_mode='HTML')
+            logger.info(f"✅ Profile menu sent successfully to user {user.id}")
+            
+        except Exception as e:
+            logger.error(f"🔥 Critical error in profile menu for user {user.id}: {e}")
+            # Ultra-safe fallback
+            try:
+                fallback_text = f"👤 <b>Мой профиль</b>\n\n🆔 ID: {user.id}\n👋 {user.first_name}\n\n⚠️ Профиль временно недоступен"
+                keyboard = [
+                    [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
+                ]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(fallback_text, reply_markup=reply_markup, parse_mode='HTML')
+            except Exception as fallback_error:
+                logger.error(f"🔥 Even fallback failed: {fallback_error}")
+                await query.answer("❌ Ошибка профиля. Попробуйте позже.")
         
     elif data == "back_to_main_menu":
         # Handle back to main menu
@@ -1419,6 +1457,44 @@ async def handle_confirm_clear_vocabulary(update: Update, context: CallbackConte
 async def admin_command(update: Update, context: CallbackContext) -> None:
     """Handle /admin command"""
     await show_admin_panel(update, context)
+
+async def test_db_command(update: Update, context: CallbackContext) -> None:
+    """Test database functionality - for debugging"""
+    user = update.effective_user
+    
+    try:
+        # Test basic database operations
+        test_results = []
+        
+        # Test 1: User info
+        try:
+            user_info = db.get_user_info(user.id)
+            test_results.append(f"✅ User info: {user_info is not None}")
+        except Exception as e:
+            test_results.append(f"❌ User info error: {str(e)[:50]}")
+        
+        # Test 2: Vocabulary count
+        try:
+            vocab_count = db.get_user_vocabulary_count(user.id)
+            test_results.append(f"✅ Vocabulary count: {vocab_count}")
+        except Exception as e:
+            test_results.append(f"❌ Vocabulary count error: {str(e)[:50]}")
+        
+        # Test 3: Database connection
+        try:
+            with sqlite3.connect(db.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table'")
+                tables = cursor.fetchall()
+                test_results.append(f"✅ Tables: {len(tables)} found")
+        except Exception as e:
+            test_results.append(f"❌ Database connection error: {str(e)[:50]}")
+        
+        test_text = f"🔧 <b>Database Test Results</b>\n\n" + "\n".join(test_results)
+        await update.message.reply_text(test_text, parse_mode='HTML')
+        
+    except Exception as e:
+        await update.message.reply_text(f"❌ Test failed: {e}")
 
 async def show_admin_panel(update: Update, context: CallbackContext) -> None:
     """Show the main admin panel"""
