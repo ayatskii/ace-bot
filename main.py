@@ -47,11 +47,16 @@ def main():
     application.add_handler(CallbackQueryHandler(bot_handlers.speaking_part_callback, pattern=r'^speaking_part_\d$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.info_section_callback, pattern=r'^info_(listening|reading)_'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_start_buttons, pattern=r'^(menu_help|help_button)$'))
-    application.add_handler(CallbackQueryHandler(bot_handlers.menu_button_callback, pattern=r'^menu_(vocabulary|writing|speaking|info|grammar)$|^back_to_main_menu$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.menu_button_callback, pattern=r'^menu_(vocabulary|writing|speaking|info|grammar|profile)$|^back_to_main_menu$'))
     # Add global handlers for vocabulary and writing buttons (for menu-based access)
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_vocabulary_choice_global, pattern=r'^vocabulary_(random|topic)$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_writing_task_type_global, pattern=r'^writing_task_type_\d$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_writing_check_global, pattern=r'^writing_check$'))
+    # Add handlers for personalization features
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_save_word_to_vocabulary, pattern=r'^save_word_to_vocabulary$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_profile_vocabulary, pattern=r'^profile_vocabulary$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_clear_vocabulary, pattern=r'^clear_vocabulary$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_confirm_clear_vocabulary, pattern=r'^confirm_clear_vocabulary$'))
     
     logger.info("✅ Callback query handlers registered.")
 

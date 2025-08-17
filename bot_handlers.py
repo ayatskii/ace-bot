@@ -2,7 +2,9 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import CallbackContext, ConversationHandler, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 import logging
 import re
+import sqlite3
 import config
+from database import db
 
 from gemini_api import (
     get_random_word_details, generate_ielts_writing_task, evaluate_writing,
@@ -11,6 +13,23 @@ from gemini_api import (
 )
 
 logger = logging.getLogger(__name__)
+
+# --- Utility Functions for Word Parsing ---
+def parse_word_details(word_details: str) -> dict:
+    """Parse word details from Gemini API response"""
+    import re
+    
+    word_match = re.search(r'📝 Word: (.+)', word_details, re.IGNORECASE)
+    definition_match = re.search(r'📖 Definition: (.+)', word_details, re.IGNORECASE)
+    translation_match = re.search(r'🇷🇺 Translation: (.+)', word_details, re.IGNORECASE)
+    example_match = re.search(r'💡 Example: (.+)', word_details, re.IGNORECASE)
+    
+    return {
+        'word': word_match.group(1).strip() if word_match else 'Unknown',
+        'definition': definition_match.group(1).strip() if definition_match else '',
+        'translation': translation_match.group(1).strip() if translation_match else '',
+        'example': example_match.group(1).strip() if example_match else ''
+    }
 
 # --- Conversation States ---
 GET_WRITING_TOPIC = 1
@@ -311,6 +330,15 @@ async def setup_bot_menu_button(context: CallbackContext) -> None:
 
 async def start_command(update: Update, context: CallbackContext) -> None:
     user = update.effective_user
+    
+    # Add user to database
+    db.add_user(
+        user_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
+    
     welcome_message = (f"👋 Привет, {user.first_name}!\n\nЯ ваш помощник по подготовке к IELTS...")
     
     keyboard = [
@@ -333,12 +361,17 @@ async def help_command(update: Update, context: CallbackContext) -> None:
 
 async def menu_command(update: Update, context: CallbackContext, force_new_message=False) -> None:
     """Sends an interactive main menu with buttons for all main features."""
+    user = update.effective_user
+    if user:
+        db.update_user_activity(user.id)
+    
     keyboard = [
         [InlineKeyboardButton("🧠 Словарь", callback_data="menu_vocabulary")],
         [InlineKeyboardButton("✍️ Письмо", callback_data="menu_writing")],
         [InlineKeyboardButton("🗣️ Говорение", callback_data="menu_speaking")],
         [InlineKeyboardButton("ℹ️ Информация", callback_data="menu_info")],
         [InlineKeyboardButton("📖 Грамматика", callback_data="menu_grammar")],
+        [InlineKeyboardButton("👤 Мой профиль", callback_data="menu_profile")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     if force_new_message:
@@ -427,6 +460,28 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text("ℹ️ Choose the specific IELTS task type you want strategies for:", reply_markup=reply_markup)
         
+    elif data == "menu_profile":
+        # Handle profile menu selection
+        user_info = db.get_user_info(user.id)
+        vocabulary_count = db.get_user_vocabulary_count(user.id)
+        
+        profile_text = f"👤 <b>Мой профиль</b>\n\n"
+        profile_text += f"🆔 ID: {user.id}\n"
+        profile_text += f"👋 Имя: {user.first_name}"
+        if user.last_name:
+            profile_text += f" {user.last_name}"
+        profile_text += f"\n📚 Слов в словаре: {vocabulary_count}"
+        
+        if user_info:
+            profile_text += f"\n📅 Дата регистрации: {user_info[4][:10]}"
+        
+        keyboard = [
+            [InlineKeyboardButton("📖 Мой словарь", callback_data="profile_vocabulary")],
+            [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(profile_text, reply_markup=reply_markup, parse_mode='HTML')
+        
     elif data == "back_to_main_menu":
         # Handle back to main menu
         keyboard = [
@@ -435,6 +490,7 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
             [InlineKeyboardButton("🗣️ Говорение", callback_data="menu_speaking")],
             [InlineKeyboardButton("ℹ️ Информация", callback_data="menu_info")],
             [InlineKeyboardButton("📖 Грамматика", callback_data="menu_grammar")],
+            [InlineKeyboardButton("👤 Мой профиль", callback_data="menu_profile")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
@@ -463,6 +519,7 @@ async def handle_start_buttons(update: Update, context: CallbackContext) -> None
             [InlineKeyboardButton("🗣️ Говорение", callback_data="menu_speaking")],
             [InlineKeyboardButton("ℹ️ Информация", callback_data="menu_info")],
             [InlineKeyboardButton("📖 Грамматика", callback_data="menu_grammar")],
+            [InlineKeyboardButton("👤 Мой профиль", callback_data="menu_profile")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
@@ -519,9 +576,17 @@ async def handle_vocabulary_choice_callback(update: Update, context: CallbackCon
         await query.edit_message_text("🎲 Генерирую случайное слово...")
         await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
         word_details = get_random_word_details()
-        reply_markup = None
+        
+        # Store the word details for potential saving
+        context.user_data['last_random_word'] = word_details
+        
+        # Add button to save word to personal vocabulary
+        keyboard = [
+            [InlineKeyboardButton("➕ Добавить в мой словарь", callback_data="save_word_to_vocabulary")],
+            [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
         await send_or_edit_safe_text(update, context, word_details, reply_markup)
-        await menu_command(update, context, force_new_message=True)
         return ConversationHandler.END
     else:  # topic
         logger.info(f"🎯 User {update.effective_user.id} chose topic-specific vocabulary")
@@ -549,9 +614,17 @@ async def handle_vocabulary_choice_global(update: Update, context: CallbackConte
         await query.edit_message_text("🎲 Генерирую случайное слово...")
         await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
         word_details = get_random_word_details()
-        reply_markup = None
+        
+        # Store the word details for potential saving
+        context.user_data['last_random_word'] = word_details
+        
+        # Add button to save word to personal vocabulary
+        keyboard = [
+            [InlineKeyboardButton("➕ Добавить в мой словарь", callback_data="save_word_to_vocabulary")],
+            [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
         await send_or_edit_safe_text(update, context, word_details, reply_markup)
-        await menu_command(update, context, force_new_message=True)
     else:  # topic
         logger.info(f"🎯 User {update.effective_user.id} chose topic-specific vocabulary (global)")
         context.user_data['waiting_for_vocabulary_topic'] = True
@@ -1098,6 +1171,169 @@ async def handle_writing_task_type_global(update: Update, context: CallbackConte
         f"✅ Вы выбрали {context.user_data['selected_writing_task_type']}. Теперь, пожалуйста, расскажите мне тему для вашего письменного задания.",
         reply_markup=reply_markup
     )
+
+async def handle_save_word_to_vocabulary(update: Update, context: CallbackContext) -> None:
+    """Handle saving word to user's personal vocabulary"""
+    user = update.effective_user
+    query = update.callback_query
+    await query.answer()
+    
+    word_details = context.user_data.get('last_random_word', '')
+    if not word_details:
+        await query.edit_message_text("❌ Нет слова для сохранения. Попробуйте получить новое случайное слово.")
+        return
+    
+    # Parse word details
+    parsed_word = parse_word_details(word_details)
+    
+    # Check if word already exists
+    if db.word_exists_in_user_vocabulary(user.id, parsed_word['word']):
+        await query.edit_message_text(
+            f"⚠️ Слово '{parsed_word['word']}' уже есть в вашем словаре!\n\n"
+            f"📖 Перейти в мой словарь или выбрать новое слово?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📖 Мой словарь", callback_data="profile_vocabulary")],
+                [InlineKeyboardButton("🎲 Новое слово", callback_data="vocabulary_random")],
+                [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
+            ])
+        )
+        return
+    
+    # Save word to database
+    success = db.save_word_to_user_vocabulary(
+        user_id=user.id,
+        word=parsed_word['word'],
+        definition=parsed_word['definition'],
+        translation=parsed_word['translation'],
+        example=parsed_word['example'],
+        topic="random"
+    )
+    
+    if success:
+        vocabulary_count = db.get_user_vocabulary_count(user.id)
+        await query.edit_message_text(
+            f"✅ Слово '{parsed_word['word']}' успешно добавлено в ваш словарь!\n\n"
+            f"📚 Всего слов в словаре: {vocabulary_count}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📖 Мой словарь", callback_data="profile_vocabulary")],
+                [InlineKeyboardButton("🎲 Новое слово", callback_data="vocabulary_random")],
+                [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
+            ])
+        )
+    else:
+        await query.edit_message_text(
+            "❌ Произошла ошибка при сохранении слова. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
+            ])
+        )
+
+async def handle_profile_vocabulary(update: Update, context: CallbackContext) -> None:
+    """Handle viewing user's personal vocabulary"""
+    user = update.effective_user
+    query = update.callback_query
+    await query.answer()
+    
+    words = db.get_user_vocabulary(user.id, limit=20)  # Show last 20 words
+    vocabulary_count = db.get_user_vocabulary_count(user.id)
+    
+    if not words:
+        await query.edit_message_text(
+            "📖 <b>Мой словарь</b>\n\n"
+            "📝 Ваш словарь пока пуст.\n"
+            "Добавьте слова, используя функцию 'Случайное слово'!",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎲 Случайное слово", callback_data="vocabulary_random")],
+                [InlineKeyboardButton("🔙 Назад к профилю", callback_data="menu_profile")],
+            ]),
+            parse_mode='HTML'
+        )
+        return
+    
+    # Format vocabulary list
+    vocabulary_text = f"📖 <b>Мой словарь</b> ({vocabulary_count} слов)\n\n"
+    
+    for i, (word, definition, translation, example, topic, saved_at) in enumerate(words, 1):
+        vocabulary_text += f"<b>{i}. {word.upper()}</b>\n"
+        if definition:
+            vocabulary_text += f"📖 {definition}\n"
+        if translation:
+            vocabulary_text += f"🇷🇺 {translation}\n"
+        if example:
+            vocabulary_text += f"💡 {example}\n"
+        vocabulary_text += f"📅 {saved_at[:10]}\n\n"
+    
+    if vocabulary_count > 20:
+        vocabulary_text += f"<i>... и еще {vocabulary_count - 20} слов</i>\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("🗑️ Очистить словарь", callback_data="clear_vocabulary")],
+        [InlineKeyboardButton("🔙 Назад к профилю", callback_data="menu_profile")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Split long message if needed
+    await send_long_message(update, context, vocabulary_text, reply_markup, parse_mode='HTML')
+
+async def handle_clear_vocabulary(update: Update, context: CallbackContext) -> None:
+    """Handle clearing user's vocabulary with confirmation"""
+    user = update.effective_user
+    query = update.callback_query
+    await query.answer()
+    
+    vocabulary_count = db.get_user_vocabulary_count(user.id)
+    
+    if vocabulary_count == 0:
+        await query.edit_message_text(
+            "📖 Ваш словарь уже пуст!",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад к профилю", callback_data="menu_profile")],
+            ])
+        )
+        return
+    
+    await query.edit_message_text(
+        f"⚠️ <b>Подтверждение</b>\n\n"
+        f"Вы уверены, что хотите удалить все {vocabulary_count} слов из вашего словаря?\n\n"
+        f"<i>Это действие нельзя отменить!</i>",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Да, очистить", callback_data="confirm_clear_vocabulary")],
+            [InlineKeyboardButton("❌ Отмена", callback_data="profile_vocabulary")],
+        ]),
+        parse_mode='HTML'
+    )
+
+async def handle_confirm_clear_vocabulary(update: Update, context: CallbackContext) -> None:
+    """Handle confirmed vocabulary clearing"""
+    user = update.effective_user
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        with sqlite3.connect(db.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM user_words WHERE user_id = ?', (user.id,))
+            deleted_count = cursor.rowcount
+            conn.commit()
+            
+        await query.edit_message_text(
+            f"✅ Словарь очищен!\n\n"
+            f"Удалено слов: {deleted_count}",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🎲 Добавить новые слова", callback_data="vocabulary_random")],
+                [InlineKeyboardButton("🔙 Назад к профилю", callback_data="menu_profile")],
+            ])
+        )
+        logger.info(f"✅ User {user.id} cleared their vocabulary ({deleted_count} words)")
+        
+    except Exception as e:
+        logger.error(f"🔥 Failed to clear vocabulary for user {user.id}: {e}")
+        await query.edit_message_text(
+            "❌ Произошла ошибка при очистке словаря.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад к профилю", callback_data="menu_profile")],
+            ])
+        )
 
 async def handle_writing_check_global(update: Update, context: CallbackContext) -> None:
     """Handle the 'Check Essay' button press - for global handler (menu-based access)"""

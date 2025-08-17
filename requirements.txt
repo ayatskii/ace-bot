@@ -8,4 +8,4 @@ google-generativeai==0.3.2
 python-dotenv==1.0.0
 
 # Standard library dependencies (included with Python)
-# logging, time, hashlib, random, os, re - no additional installation needed 
+# logging, time, hashlib, random, os, re, sqlite3 - no additional installation needed
