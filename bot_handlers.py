@@ -532,41 +532,40 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
         await query.edit_message_text("ℹ️ Choose the specific IELTS task type you want strategies for:", reply_markup=reply_markup)
         
     elif data == "menu_profile":
-        # Handle profile menu selection - simplified and robust version
+        # Handle profile menu selection - ULTRA SAFE VERSION
         logger.info(f"👤 Profile menu requested by user {user.id}")
         
+        # Create the absolute minimum safe profile
         try:
-            # Get vocabulary count safely
-            try:
-                vocabulary_count = db.get_user_vocabulary_count(user.id)
-                logger.info(f"✅ Vocabulary count for user {user.id}: {vocabulary_count}")
-            except Exception as e:
-                logger.error(f"🔥 Failed to get vocabulary count: {e}")
-                vocabulary_count = 0
-            
-            # Build profile text with basic info (always available)
             profile_text = f"👤 <b>Мой профиль</b>\n\n"
             profile_text += f"🆔 ID: {user.id}\n"
             profile_text += f"👋 Имя: {user.first_name or 'Не указано'}"
-            if user.last_name:
-                profile_text += f" {user.last_name}"
-            if user.username:
-                profile_text += f"\n📧 Username: @{user.username}"
-            profile_text += f"\n📚 Слов в словаре: {vocabulary_count}"
             
-            # Try to get registration date (optional)
+            # Add last name safely
             try:
-                user_info = db.get_user_info(user.id)
-                logger.info(f"✅ User info retrieved: {user_info is not None}")
-                if user_info and len(user_info) > 6 and user_info[6]:
-                    created_at = str(user_info[6])
-                    if len(created_at) >= 10:
-                        profile_text += f"\n📅 Дата регистрации: {created_at[:10]}"
-                    else:
-                        profile_text += f"\n📅 Регистрация: {created_at}"
+                if user.last_name:
+                    profile_text += f" {user.last_name}"
+            except:
+                pass
+            
+            # Add username safely
+            try:
+                if user.username:
+                    profile_text += f"\n📧 Username: @{user.username}"
+            except:
+                pass
+            
+            # Add vocabulary count safely
+            try:
+                vocabulary_count = db.get_user_vocabulary_count(user.id)
+                profile_text += f"\n📚 Слов в словаре: {vocabulary_count}"
+                logger.info(f"✅ Vocabulary count for user {user.id}: {vocabulary_count}")
             except Exception as e:
-                logger.warning(f"⚠️ Could not get registration date: {e}")
-                # This is optional, so we continue without it
+                profile_text += f"\n📚 Слов в словаре: 0"
+                logger.error(f"🔥 Failed to get vocabulary count: {e}")
+            
+            # Skip registration date for now to avoid errors
+            logger.info(f"📝 Profile text created: {len(profile_text)} chars")
             
             keyboard = [
                 [InlineKeyboardButton("📖 Мой словарь", callback_data="profile_vocabulary")],
@@ -574,22 +573,30 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
+            logger.info(f"📝 Attempting to send profile to user {user.id}")
             await query.edit_message_text(profile_text, reply_markup=reply_markup, parse_mode='HTML')
             logger.info(f"✅ Profile menu sent successfully to user {user.id}")
             
         except Exception as e:
             logger.error(f"🔥 Critical error in profile menu for user {user.id}: {e}")
-            # Ultra-safe fallback
+            import traceback
+            logger.error(f"🔥 Full traceback: {traceback.format_exc()}")
+            
+            # Ultra-safe fallback - absolute minimum
             try:
-                fallback_text = f"👤 <b>Мой профиль</b>\n\n🆔 ID: {user.id}\n👋 {user.first_name}\n\n⚠️ Профиль временно недоступен"
+                fallback_text = f"👤 Мой профиль\n\nID: {user.id}\nИмя: {user.first_name}\n\n⚠️ Профиль временно недоступен"
                 keyboard = [
                     [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
                 ]
                 reply_markup = InlineKeyboardMarkup(keyboard)
-                await query.edit_message_text(fallback_text, reply_markup=reply_markup, parse_mode='HTML')
+                await query.edit_message_text(fallback_text, reply_markup=reply_markup)
+                logger.info(f"✅ Fallback profile sent to user {user.id}")
             except Exception as fallback_error:
                 logger.error(f"🔥 Even fallback failed: {fallback_error}")
-                await query.answer("❌ Ошибка профиля. Попробуйте позже.")
+                try:
+                    await query.answer("❌ Ошибка профиля. Попробуйте позже.")
+                except:
+                    logger.error(f"🔥 Could not even send error message to user {user.id}")
         
     elif data == "back_to_main_menu":
         # Handle back to main menu
@@ -1240,7 +1247,8 @@ writing_conversation_handler = ConversationHandler(
     },
     fallbacks=[CommandHandler("cancel", cancel)],
     name="writing_conversation",
-    persistent=False
+    persistent=False,
+    per_message=False
 )
 
 grammar_conversation_handler = ConversationHandler(
@@ -1266,7 +1274,8 @@ vocabulary_conversation_handler = ConversationHandler(
     },
     fallbacks=[CommandHandler("cancel", cancel)],
     name="vocabulary_conversation",
-    persistent=False
+    persistent=False,
+    per_message=False
 )
 
 async def handle_writing_task_type_global(update: Update, context: CallbackContext) -> None:
