@@ -39,6 +39,7 @@ def main():
     
     # --- Admin Command Handlers ---
     application.add_handler(CommandHandler("admin", bot_handlers.admin_command))
+    application.add_handler(CommandHandler("adminhelp", bot_handlers.admin_help_command))
     application.add_handler(CommandHandler("testdb", bot_handlers.test_db_command))  # Debug command
     application.add_handler(CommandHandler("whitelist", bot_handlers.admin_whitelist_status_command))  # Whitelist status
     # Dynamic admin commands for user management
@@ -82,6 +83,7 @@ def main():
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_users, pattern=r'^admin_users$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_search, pattern=r'^admin_search$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_detailed_stats, pattern=r'^admin_stats$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_help, pattern=r'^admin_help$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_users_pagination, pattern=r'^admin_users_page_\d+$'))
     
     logger.info("✅ Callback query handlers registered.")

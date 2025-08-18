@@ -1692,6 +1692,34 @@ async def admin_command(update: Update, context: CallbackContext) -> None:
     """Handle /admin command"""
     await show_admin_panel(update, context)
 
+@require_admin
+async def admin_help_command(update: Update, context: CallbackContext) -> None:
+    """Handle /adminhelp command - show full admin instructions"""
+    help_text = """📖 <b>БЫСТРАЯ СПРАВКА ДЛЯ АДМИНИСТРАТОРА</b>
+
+🚀 <b>Основные команды:</b>
+• <code>/admin</code> - Админ-панель
+• <code>/adminhelp</code> - Эта справка
+• <code>/testdb</code> - Проверка БД
+• <code>/whitelist</code> - Статус whitelist
+
+👥 <b>Управление пользователями:</b>
+• <code>/block_ID</code> - Заблокировать
+• <code>/unblock_ID</code> - Разблокировать  
+• <code>/delete_ID</code> - Удалить (необратимо!)
+
+🔐 <b>Управление доступом:</b>
+• <code>/adduser_ID</code> - Добавить по ID
+• <code>/addusername_name</code> - Добавить по username
+• <code>/removeuser_ID</code> - Удалить по ID
+• <code>/removeusername_name</code> - Удалить по username
+
+💡 <b>Полная инструкция:</b> /admin → "📖 Инструкция для админа"
+
+⚠️ <b>Помните:</b> Команды удаления необратимы! Используйте блокировку вместо удаления когда это возможно."""
+
+    await update.message.reply_text(help_text, parse_mode='HTML')
+
 async def test_db_command(update: Update, context: CallbackContext) -> None:
     """Test database functionality - for debugging"""
     user = update.effective_user
@@ -1750,6 +1778,7 @@ async def show_admin_panel(update: Update, context: CallbackContext) -> None:
         [InlineKeyboardButton("👥 Управление пользователями", callback_data="admin_users")],
         [InlineKeyboardButton("🔍 Поиск пользователя", callback_data="admin_search")],
         [InlineKeyboardButton("📊 Подробная статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton("📖 Инструкция для админа", callback_data="admin_help")],
         [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1955,6 +1984,136 @@ async def handle_admin_detailed_stats(update: Update, context: CallbackContext) 
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await send_long_message(update, context, stats_text, reply_markup, parse_mode='HTML')
+
+async def handle_admin_help(update: Update, context: CallbackContext) -> None:
+    """Show comprehensive admin instructions"""
+    query = update.callback_query
+    await query.answer()
+    
+    help_text = """📖 <b>ПОЛНАЯ ИНСТРУКЦИЯ ДЛЯ АДМИНИСТРАТОРА</b>
+
+═══════════════════════════════════════════════════════
+🚀 <b>ОСНОВНЫЕ КОМАНДЫ</b>
+═══════════════════════════════════════════════════════
+
+<b>🔧 Панель управления:</b>
+• <code>/admin</code> - Открыть админ-панель
+• <code>/testdb</code> - Проверить подключение к базе данных
+• <code>/whitelist</code> - Показать статус whitelist
+
+═══════════════════════════════════════════════════════
+👥 <b>УПРАВЛЕНИЕ ПОЛЬЗОВАТЕЛЯМИ</b>
+═══════════════════════════════════════════════════════
+
+<b>🔍 Поиск пользователей:</b>
+• В админ-панели → "🔍 Поиск пользователя"
+• Поиск по: ID, username, имени
+• Пример: <code>@username</code>, <code>John</code>, <code>123456789</code>
+
+<b>🚫 Блокировка/разблокировка:</b>
+• <code>/block_123456</code> - Заблокировать пользователя по ID
+• <code>/unblock_123456</code> - Разблокировать пользователя по ID
+
+<b>🗑️ Удаление пользователей:</b>
+• <code>/delete_123456</code> - Удалить пользователя и все его данные
+• ⚠️ <b>Осторожно!</b> Действие необратимо!
+
+═══════════════════════════════════════════════════════
+🔐 <b>УПРАВЛЕНИЕ WHITELIST</b>
+═══════════════════════════════════════════════════════
+
+<b>➕ Добавление доступа:</b>
+• <code>/adduser_123456</code> - Добавить пользователя по Telegram ID
+• <code>/addusername_username</code> - Добавить пользователя по username (без @)
+
+<b>➖ Удаление доступа:</b>
+• <code>/removeuser_123456</code> - Удалить пользователя по ID
+• <code>/removeusername_username</code> - Удалить пользователя по username
+
+<b>📋 Примеры:</b>
+• <code>/adduser_546321644</code>
+• <code>/addusername_johnsmith</code>
+• <code>/removeuser_546321644</code>
+• <code>/removeusername_johnsmith</code>
+
+═══════════════════════════════════════════════════════
+📊 <b>МОНИТОРИНГ И СТАТИСТИКА</b>
+═══════════════════════════════════════════════════════
+
+<b>📈 Доступная статистика:</b>
+• Общее количество пользователей
+• Активные/заблокированные пользователи
+• Пользователи с сохраненными словами
+• Активность за 24ч/7д/30д
+• Топ пользователей по словарному запасу
+• Популярные сохраненные слова
+
+<b>🔄 Обновление данных:</b>
+• Все статистики обновляются в реальном времени
+• Кнопка "Обновить" для принудительного обновления
+
+═══════════════════════════════════════════════════════
+🛡️ <b>БЕЗОПАСНОСТЬ И ЛУЧШИЕ ПРАКТИКИ</b>
+═══════════════════════════════════════════════════════
+
+<b>⚠️ Важные правила:</b>
+• Никогда не удаляйте пользователей без крайней необходимости
+• Блокировка - более безопасная альтернатива удалению
+• Регулярно проверяйте статистику на подозрительную активность
+• Осторожно с командами удаления - они необратимы
+
+<b>🔍 Поиск проблемных пользователей:</b>
+• Используйте поиск для быстрого доступа к конкретным пользователям
+• Проверяйте дату регистрации и последней активности
+• Обращайте внимание на пользователей без имени
+
+<b>📝 Логирование:</b>
+• Все административные действия логируются
+• Проверяйте логи для отслеживания изменений
+• Время блокировки и ID администратора сохраняются
+
+═══════════════════════════════════════════════════════
+🚨 <b>ЭКСТРЕННЫЕ СИТУАЦИИ</b>
+═══════════════════════════════════════════════════════
+
+<b>🔧 Если бот не отвечает:</b>
+1. Проверьте <code>/testdb</code>
+2. Перезапустите бота
+3. Проверьте логи на ошибки
+
+<b>🛑 При массовом спаме:</b>
+1. Быстро заблокируйте проблемного пользователя
+2. Используйте поиск для поиска связанных аккаунтов
+3. При необходимости отключите регистрацию новых пользователей
+
+<b>📞 Техническая поддержка:</b>
+• Сохраняйте ID проблемных пользователей
+• Делайте скриншоты ошибок
+• Записывайте время возникновения проблем
+
+═══════════════════════════════════════════════════════
+✨ <b>ДОПОЛНИТЕЛЬНЫЕ ВОЗМОЖНОСТИ</b>
+═══════════════════════════════════════════════════════
+
+<b>📄 Пагинация:</b>
+• Пользователи отображаются по 10 на страницу
+• Используйте кнопки ⬅️➡️ для навигации
+
+<b>🎯 Быстрые действия:</b>
+• Клик по результату поиска показывает полную информацию
+• Команды блокировки доступны прямо из результатов поиска
+
+<b>💡 Советы:</b>
+• Используйте поиск вместо пролистывания всех пользователей
+• Регулярно проверяйте подробную статистику
+• Ведите записи важных административных решений"""
+
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад к админ-панели", callback_data="admin_panel")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await send_long_message(update, context, help_text, reply_markup, parse_mode='HTML')
 
 async def handle_admin_search_input(update: Update, context: CallbackContext) -> None:
     """Handle admin search input"""
