@@ -1775,9 +1775,18 @@ async def handle_admin_users(update: Update, context: CallbackContext) -> None:
     query = update.callback_query
     await query.answer()
     
-    users = db.get_all_users(limit=10)
+    # Reset pagination when first accessing users panel
+    context.user_data['admin_users_offset'] = 0
+    await show_admin_users_page(update, context, offset=0)
+
+async def show_admin_users_page(update: Update, context: CallbackContext, offset: int = 0) -> None:
+    """Show users page with pagination"""
+    limit = 10
+    users = db.get_all_users(limit=limit, offset=offset)
+    total_users = db.get_user_stats().get('total_users', 0)
     
     users_text = f"👥 <b>Управление пользователями</b>\n\n"
+    users_text += f"📊 Показано: {offset + 1}-{min(offset + limit, total_users)} из {total_users}\n\n"
     
     if not users:
         users_text += "📝 Пользователи не найдены.\n"
@@ -1793,14 +1802,33 @@ async def handle_admin_users(update: Update, context: CallbackContext) -> None:
             users_text += f"🆔 {user_id} | {username_text}\n"
             users_text += f"📅 Регистрация: {created_at[:10]}\n\n"
     
-    keyboard = [
+    # Build pagination buttons
+    keyboard = []
+    pagination_row = []
+    
+    # Previous page button
+    if offset > 0:
+        pagination_row.append(InlineKeyboardButton("⬅️ Назад", callback_data=f"admin_users_page_{offset - limit}"))
+    
+    # Next page button
+    if offset + limit < total_users:
+        pagination_row.append(InlineKeyboardButton("➡️ Далее", callback_data=f"admin_users_page_{offset + limit}"))
+    
+    if pagination_row:
+        keyboard.append(pagination_row)
+    
+    # Action buttons
+    keyboard.extend([
         [InlineKeyboardButton("🔍 Поиск пользователя", callback_data="admin_search")],
-        [InlineKeyboardButton("📋 Показать больше", callback_data="admin_users_more")],
         [InlineKeyboardButton("🔙 Назад к админ-панели", callback_data="admin_panel")],
-    ]
+    ])
+    
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await send_long_message(update, context, users_text, reply_markup, parse_mode='HTML')
+    if update.callback_query:
+        await send_long_message(update, context, users_text, reply_markup, parse_mode='HTML')
+    else:
+        await update.message.reply_text(users_text, reply_markup=reply_markup, parse_mode='HTML')
 
 async def handle_admin_search(update: Update, context: CallbackContext) -> None:
     """Handle admin search request"""
@@ -1821,6 +1849,112 @@ async def handle_admin_search(update: Update, context: CallbackContext) -> None:
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await query.edit_message_text(search_text, reply_markup=reply_markup, parse_mode='HTML')
+
+async def handle_admin_users_pagination(update: Update, context: CallbackContext) -> None:
+    """Handle pagination for admin users"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Extract offset from callback data
+    callback_data = query.data
+    offset = int(callback_data.split('_')[-1])
+    
+    await show_admin_users_page(update, context, offset=offset)
+
+async def handle_admin_detailed_stats(update: Update, context: CallbackContext) -> None:
+    """Handle detailed statistics panel"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Get basic stats
+    stats = db.get_user_stats()
+    
+    # Get additional detailed statistics
+    try:
+        with sqlite3.connect(db.db_path) as conn:
+            cursor = conn.cursor()
+            
+            # Most active users by vocabulary count
+            cursor.execute('''
+                SELECT u.first_name, u.username, u.user_id, COUNT(uw.word) as word_count
+                FROM users u
+                LEFT JOIN user_words uw ON u.user_id = uw.user_id
+                WHERE u.is_active = 1 AND u.is_blocked = 0
+                GROUP BY u.user_id
+                ORDER BY word_count DESC
+                LIMIT 5
+            ''')
+            top_users = cursor.fetchall()
+            
+
+            
+            # Most popular saved words
+            cursor.execute('''
+                SELECT word, COUNT(*) as save_count
+                FROM user_words
+                GROUP BY word
+                ORDER BY save_count DESC
+                LIMIT 5
+            ''')
+            popular_words = cursor.fetchall()
+            
+            # Users by activity (last activity)
+            cursor.execute('''
+                SELECT 
+                    SUM(CASE WHEN last_activity >= datetime('now', '-1 day') THEN 1 ELSE 0 END) as last_24h,
+                    SUM(CASE WHEN last_activity >= datetime('now', '-7 days') THEN 1 ELSE 0 END) as last_7d,
+                    SUM(CASE WHEN last_activity >= datetime('now', '-30 days') THEN 1 ELSE 0 END) as last_30d
+                FROM users
+                WHERE is_active = 1 AND is_blocked = 0
+            ''')
+            activity_stats = cursor.fetchone()
+            
+    except Exception as e:
+        logger.error(f"🔥 Failed to get detailed stats: {e}")
+        top_users = []
+        popular_words = []
+        activity_stats = (0, 0, 0)
+    
+    # Build detailed statistics text
+    stats_text = f"📊 <b>Подробная статистика</b>\n\n"
+    
+    # Basic stats
+    stats_text += f"👥 <b>Общая статистика:</b>\n"
+    stats_text += f"• Всего пользователей: {stats.get('total_users', 0)}\n"
+    stats_text += f"• Активных: {stats.get('active_users', 0)}\n"
+    stats_text += f"• Заблокированных: {stats.get('blocked_users', 0)}\n"
+    stats_text += f"• С сохраненными словами: {stats.get('users_with_words', 0)}\n"
+    stats_text += f"• Всего слов в базе: {stats.get('total_words', 0)}\n\n"
+    
+    # Activity stats
+    if activity_stats:
+        stats_text += f"📈 <b>Активность пользователей:</b>\n"
+        stats_text += f"• За 24 часа: {activity_stats[0]}\n"
+        stats_text += f"• За 7 дней: {activity_stats[1]}\n"
+        stats_text += f"• За 30 дней: {activity_stats[2]}\n\n"
+    
+    # Top users by vocabulary
+    if top_users:
+        stats_text += f"🏆 <b>Топ пользователей по словарю:</b>\n"
+        for i, (name, username, user_id, word_count) in enumerate(top_users, 1):
+            name_display = name or "Без имени"
+            username_display = f"@{username}" if username else f"ID:{user_id}"
+            stats_text += f"{i}. {name_display} ({username_display}): {word_count} слов\n"
+        stats_text += "\n"
+    
+    # Popular words
+    if popular_words:
+        stats_text += f"📚 <b>Популярные слова:</b>\n"
+        for word, count in popular_words:
+            stats_text += f"• {word}: {count} сохранений\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("🔄 Обновить", callback_data="admin_stats")],
+        [InlineKeyboardButton("🔙 Назад к админ-панели", callback_data="admin_panel")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await send_long_message(update, context, stats_text, reply_markup, parse_mode='HTML')
 
 async def handle_admin_search_input(update: Update, context: CallbackContext) -> None:
     """Handle admin search input"""

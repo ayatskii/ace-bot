@@ -81,6 +81,8 @@ def main():
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_panel_callback, pattern=r'^admin_panel$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_users, pattern=r'^admin_users$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_search, pattern=r'^admin_search$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_detailed_stats, pattern=r'^admin_stats$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_users_pagination, pattern=r'^admin_users_page_\d+$'))
     
     logger.info("✅ Callback query handlers registered.")
 
