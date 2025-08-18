@@ -9,8 +9,9 @@ from database import db
 from gemini_api import (
     get_random_word_details, generate_ielts_writing_task, evaluate_writing,
     generate_speaking_question, generate_ielts_strategies, explain_grammar_structure,
-    get_topic_specific_words
+    get_topic_specific_words, evaluate_speaking_response
 )
+from audio_processor import audio_processor
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,12 @@ def require_access(func):
     """Decorator to check user access before executing function"""
     async def wrapper(update: Update, context: CallbackContext, *args, **kwargs):
         user = update.effective_user
-        if not check_user_access(user.id):
+        
+        # Check user access (ID or username)
+        has_id_access = check_user_access(user.id)
+        has_username_access = check_username_access(user.username) if user.username else False
+        
+        if not (has_id_access or has_username_access):
             await send_access_denied_message(update, context)
             return
         return await func(update, context, *args, **kwargs)
@@ -433,6 +439,7 @@ async def start_command(update: Update, context: CallbackContext) -> None:
     
     await update.message.reply_text(welcome_message, reply_markup=reply_markup)
 
+@require_access
 async def help_command(update: Update, context: CallbackContext) -> None:
     help_text = ("Вот команды, которые вы можете использовать:\n\n"
                  "📋 /menu - Открыть интерактивное главное меню\n"
@@ -443,6 +450,7 @@ async def help_command(update: Update, context: CallbackContext) -> None:
                  "📖 /grammar - Получить объяснение грамматической темы.")
     await update.message.reply_text(help_text)
 
+@require_access
 async def menu_command(update: Update, context: CallbackContext, force_new_message=False) -> None:
     """Sends an interactive main menu with buttons for all main features."""
     user = update.effective_user
@@ -473,6 +481,7 @@ async def menu_command(update: Update, context: CallbackContext, force_new_messa
             parse_mode='HTML'
         )
 
+@require_access
 async def menu_button_callback(update: Update, context: CallbackContext) -> None:
     """Handle main menu button presses"""
     user = update.effective_user
@@ -632,6 +641,7 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
         logger.warning(f"❌ Unknown menu option received: '{data}' from user {user.id}")
         await query.edit_message_text(f"Unknown menu option: {data}")
 
+@require_access
 async def handle_start_buttons(update: Update, context: CallbackContext) -> None:
     """Handle buttons from the start command"""
     user = update.effective_user
@@ -668,6 +678,7 @@ async def handle_start_buttons(update: Update, context: CallbackContext) -> None
         await query.edit_message_text(help_text)
 
 # --- VOCABULARY (Conversation) ---
+@require_access
 async def start_vocabulary_selection(update: Update, context: CallbackContext, force_new_message=False) -> int:
     keyboard = [
         [InlineKeyboardButton("🎲 Случайное слово", callback_data="vocabulary_random")],
@@ -692,6 +703,7 @@ async def start_vocabulary_selection(update: Update, context: CallbackContext, f
         await update.message.reply_text("📖 Какой тип словаря вы хотите?", reply_markup=reply_markup)
     return GET_VOCABULARY_TOPIC
 
+@require_access
 async def handle_vocabulary_choice_callback(update: Update, context: CallbackContext) -> int:
     """Handle vocabulary choice - for conversation handler"""
     user = update.effective_user
@@ -730,6 +742,7 @@ async def handle_vocabulary_choice_callback(update: Update, context: CallbackCon
         )
         return GET_VOCABULARY_TOPIC
 
+@require_access
 async def handle_vocabulary_choice_global(update: Update, context: CallbackContext) -> None:
     """Handle vocabulary choice - for global handler (menu-based access)"""
     user = update.effective_user
@@ -766,6 +779,7 @@ async def handle_vocabulary_choice_global(update: Update, context: CallbackConte
             reply_markup=reply_markup
         )
 
+@require_access
 async def get_topic_and_generate_vocabulary(update: Update, context: CallbackContext) -> int:
     topic = update.message.text
     context.user_data['current_vocabulary_topic'] = topic
@@ -782,6 +796,7 @@ async def get_topic_and_generate_vocabulary(update: Update, context: CallbackCon
     return ConversationHandler.END
 
 # --- VOCABULARY (Legacy - keeping for backward compatibility) ---
+@require_access
 async def handle_vocabulary_command(update: Update, context: CallbackContext) -> None:
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     word_details = get_random_word_details()
@@ -789,6 +804,7 @@ async def handle_vocabulary_command(update: Update, context: CallbackContext) ->
     await send_or_edit_safe_text(update, context, word_details, reply_markup)
     await menu_command(update, context, force_new_message=True)
 
+@require_access
 async def handle_vocabulary_topic_input(update: Update, context: CallbackContext) -> None:
     """Handle vocabulary topic input from users, works globally"""
     topic = update.message.text
@@ -805,6 +821,7 @@ async def handle_vocabulary_topic_input(update: Update, context: CallbackContext
     await menu_command(update, context, force_new_message=True)
 
 # --- WRITING (Conversation) ---
+@require_access
 async def start_writing_task(update: Update, context: CallbackContext, force_new_message=False) -> int:
     keyboard = [
         [InlineKeyboardButton("Задание 2 (Эссе)", callback_data="writing_task_type_2")],
@@ -829,6 +846,7 @@ async def start_writing_task(update: Update, context: CallbackContext, force_new
         await update.message.reply_text("✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
     return GET_WRITING_TOPIC
 
+@require_access
 async def handle_writing_task_type_callback(update: Update, context: CallbackContext) -> int:
     """Handle writing task type selection"""
     user = update.effective_user
@@ -850,6 +868,7 @@ async def handle_writing_task_type_callback(update: Update, context: CallbackCon
     logger.info(f"✅ User {update.effective_user.id} needs to provide topic, staying in state {GET_WRITING_TOPIC}")
     return GET_WRITING_TOPIC
 
+@require_access
 async def handle_writing_topic_input(update: Update, context: CallbackContext) -> None:
     """Handle writing topic input from users, works globally"""
     user_topic = update.message.text
@@ -870,6 +889,7 @@ async def handle_writing_topic_input(update: Update, context: CallbackContext) -
     logger.info(f"✅ Writing task generated for user {update.effective_user.id}")
     await menu_command(update, context, force_new_message=True)
 
+@require_access
 async def get_topic_and_generate_writing(update: Update, context: CallbackContext) -> int:
     user_topic = update.message.text
     selected_task_type = context.user_data.get('selected_writing_task_type', 'Task 2')
@@ -890,6 +910,7 @@ async def get_topic_and_generate_writing(update: Update, context: CallbackContex
     await menu_command(update, context, force_new_message=True)
     return GET_WRITING_SUBMISSION
 
+@require_access
 async def handle_writing_submission(update: Update, context: CallbackContext) -> int:
     student_writing = update.message.text
     task_description = context.user_data.get('current_writing_task_description', 'No specific task given.')
@@ -904,6 +925,7 @@ async def handle_writing_submission(update: Update, context: CallbackContext) ->
     await menu_command(update, context, force_new_message=True)
     return ConversationHandler.END
 
+@require_access
 async def handle_writing_check_callback(update: Update, context: CallbackContext) -> int:
     """Handle the 'Check Essay' button press - starts the writing check conversation"""
     user = update.effective_user
@@ -933,6 +955,7 @@ async def handle_writing_check_callback(update: Update, context: CallbackContext
     return GET_WRITING_CHECK_TASK
 
 # --- SPEAKING ---
+@require_access
 async def handle_speaking_command(update: Update, context: CallbackContext, force_new_message=False) -> None:
     if force_new_message:
         chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
@@ -958,6 +981,7 @@ async def handle_speaking_command(update: Update, context: CallbackContext, forc
     reply_markup = InlineKeyboardMarkup(keyboard)
     await target.reply_text("🗣️ Выберите часть устного экзамена для практики:", reply_markup=reply_markup)
 
+@require_access
 async def speaking_part_callback(update: Update, context: CallbackContext) -> None:
     """Handle speaking part selection"""
     user = update.effective_user
@@ -971,11 +995,42 @@ async def speaking_part_callback(update: Update, context: CallbackContext) -> No
     await query.edit_message_text(text=f"Отлично! 👍 Генерирую вопросы для {part_for_api}...")
     await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
     speaking_prompt = generate_speaking_question(part=part_for_api)
-    reply_markup = None
-    await send_or_edit_safe_text(update, context, speaking_prompt, reply_markup)
-    await menu_command(update, context, force_new_message=True)
+    
+    # Store the speaking prompt for later evaluation
+    context.user_data['current_speaking_prompt'] = speaking_prompt
+    
+    # Add voice response instructions
+    voice_instructions = (
+        "\n\n🎤 <b>ГОЛОСОВОЙ ОТВЕТ:</b>\n"
+        "Запишите голосовое сообщение с вашим ответом на английском языке.\n"
+        "Бот автоматически транскрибирует речь и оценит ваш ответ по шкале IELTS (1-9)!\n\n"
+        "💡 <i>Говорите четко и уверенно, как на настоящем экзамене IELTS.</i>"
+    )
+    
+    full_response = speaking_prompt + voice_instructions
+    reply_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
+    ])
+    
+    # Send message with HTML formatting for voice instructions
+    try:
+        await query.edit_message_text(text=full_response, parse_mode='HTML', reply_markup=reply_markup)
+    except Exception as e:
+        # If edit fails, send new message
+        logger.warning(f"Failed to edit message, sending new one: {e}")
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=full_response,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+    
+    # Set user state to expect voice message
+    context.user_data['waiting_for_voice_response'] = True
+    logger.info(f"🎤 User {user.id} ready to submit voice response for {part_for_api}")
 
 # --- IELTS INFO ---
+@require_access
 async def handle_info_command(update: Update, context: CallbackContext, force_new_message=False) -> None:
     if force_new_message:
         chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
@@ -1011,6 +1066,7 @@ async def handle_info_command(update: Update, context: CallbackContext, force_ne
     reply_markup = InlineKeyboardMarkup(keyboard)
     await target.reply_text("ℹ️ Choose the specific IELTS task type you want strategies for:", reply_markup=reply_markup)
 
+@require_access
 async def info_section_callback(update: Update, context: CallbackContext) -> None:
     """Handle info section selection"""
     user = update.effective_user
@@ -1057,6 +1113,7 @@ async def info_section_callback(update: Update, context: CallbackContext) -> Non
     await menu_command(update, context, force_new_message=True)
 
 # --- GRAMMAR (Conversation) ---
+@require_access
 async def start_grammar_explanation(update: Update, context: CallbackContext, force_new_message=False) -> int:
     if force_new_message:
         chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
@@ -1081,6 +1138,7 @@ async def start_grammar_explanation(update: Update, context: CallbackContext, fo
     logger.info(f"✅ Grammar prompt sent to user {update.effective_user.id}, returning state {GET_GRAMMAR_TOPIC}")
     return GET_GRAMMAR_TOPIC
 
+@require_access
 async def get_grammar_topic(update: Update, context: CallbackContext) -> int:
     grammar_topic = update.message.text
     context.user_data['current_grammar_topic'] = grammar_topic
@@ -1107,6 +1165,7 @@ async def get_grammar_topic(update: Update, context: CallbackContext) -> int:
     await menu_command(update, context, force_new_message=True)
     return ConversationHandler.END
 
+@require_access
 async def handle_grammar_topic_input(update: Update, context: CallbackContext) -> None:
     """Handle grammar topic input from users, works globally"""
     grammar_topic = update.message.text
@@ -1131,6 +1190,7 @@ async def handle_grammar_topic_input(update: Update, context: CallbackContext) -
     logger.info(f"✅ Grammar explanation generated for user {update.effective_user.id}")
     await menu_command(update, context, force_new_message=True)
 
+@require_access
 async def handle_writing_check_task_input(update: Update, context: CallbackContext) -> int:
     """Handle writing check task input from users - first step of writing check"""
     task_description = update.message.text
@@ -1152,6 +1212,7 @@ async def handle_writing_check_task_input(update: Update, context: CallbackConte
     
     return GET_WRITING_CHECK_ESSAY
 
+@require_access
 async def handle_writing_check_essay_input(update: Update, context: CallbackContext) -> int:
     """Handle writing check essay input from users - second step of writing check"""
     essay_text = update.message.text
@@ -1174,6 +1235,7 @@ async def handle_writing_check_essay_input(update: Update, context: CallbackCont
     await menu_command(update, context, force_new_message=True)
     return ConversationHandler.END
 
+@require_access
 async def handle_global_text_input(update: Update, context: CallbackContext) -> None:
     """Handle text input globally for vocabulary, grammar, and writing topics"""
     user = update.effective_user
@@ -1238,6 +1300,151 @@ async def error_handler(update: object, context: CallbackContext) -> None:
     if isinstance(update, Update) and update.effective_message:
         await update.effective_message.reply_text("An error occurred! Please try again later or type /start.")
 
+@require_access
+async def handle_voice_message(update: Update, context: CallbackContext) -> None:
+    """Handle voice messages for speaking practice evaluation"""
+    user = update.effective_user
+    
+    # Check if user is expecting a voice response
+    if not context.user_data.get('waiting_for_voice_response'):
+        await update.message.reply_text(
+            "🎤 Чтобы записать голосовой ответ, сначала выберите задание по говорению в меню.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🗣️ Говорение", callback_data="menu_speaking")],
+                [InlineKeyboardButton("📋 Главное меню", callback_data="back_to_main_menu")],
+            ])
+        )
+        return
+    
+    try:
+        # Get voice message details
+        voice = update.message.voice
+        if not voice:
+            await update.message.reply_text("❌ Ошибка: голосовое сообщение не найдено.")
+            return
+        
+        # Show processing message
+        processing_message = await update.message.reply_text(
+            "🎤 Обрабатываю ваше голосовое сообщение...\n"
+            "⏳ Транскрибирую речь и готовлю оценку..."
+        )
+        
+        # Get file URL from Telegram
+        voice_file = await context.bot.get_file(voice.file_id)
+        file_url = voice_file.file_path
+        
+        logger.info(f"🎤 Processing voice message from user {user.id}. Duration: {voice.duration}s")
+        
+        # Transcribe the voice message
+        transcription = await audio_processor.process_voice_message(file_url)
+        
+        if not transcription:
+            # Check if it's due to Eleven Labs not being available
+            if not hasattr(audio_processor, 'client') or audio_processor.client is None:
+                await processing_message.edit_text(
+                    "❌ Функция распознавания речи недоступна.\n"
+                    "Обратитесь к администратору для настройки API ключа Eleven Labs.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("📋 Главное меню", callback_data="back_to_main_menu")],
+                    ])
+                )
+            else:
+                await processing_message.edit_text(
+                    "❌ Не удалось распознать речь в голосовом сообщении.\n"
+                    "Попробуйте записать сообщение еще раз, говоря четче.",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔄 Попробовать снова", callback_data="menu_speaking")],
+                        [InlineKeyboardButton("📋 Главное меню", callback_data="back_to_main_menu")],
+                    ])
+                )
+            return
+        
+        # Get stored speaking context
+        speaking_prompt = context.user_data.get('current_speaking_prompt', 'Unknown prompt')
+        speaking_part = context.user_data.get('current_speaking_part', 'Part 1')
+        
+        logger.info(f"🎤 Transcription successful for user {user.id}. Length: {len(transcription)} chars")
+        
+        # Update processing message
+        await processing_message.edit_text(
+            "✅ Речь распознана успешно!\n"
+            "🤖 Анализирую ваш ответ по критериям IELTS..."
+        )
+        
+        # Evaluate the speaking response
+        evaluation = evaluate_speaking_response(speaking_prompt, transcription, speaking_part)
+        
+        # Prepare final response
+        final_response = (
+            f"🎤 <b>ВАША РЕЧЬ:</b>\n"
+            f"<i>«{transcription[:200]}{'...' if len(transcription) > 200 else ''}»</i>\n\n"
+            f"{evaluation}"
+        )
+        
+        # Create reply markup
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔄 Попробовать еще раз", callback_data="menu_speaking")],
+            [InlineKeyboardButton("📋 Главное меню", callback_data="back_to_main_menu")],
+        ])
+        
+        # Send the evaluation as single message (Telegram limit is 4096 chars)
+        try:
+            await update.message.reply_text(
+                text=final_response, 
+                parse_mode='HTML', 
+                reply_markup=reply_markup
+            )
+        except Exception as e:
+            # If message is too long, truncate the transcription and try again
+            logger.warning(f"Message too long, truncating: {e}")
+            truncated_transcription = transcription[:100] + "..." if len(transcription) > 100 else transcription
+            final_response_short = (
+                f"🎤 <b>ВАША РЕЧЬ:</b>\n"
+                f"<i>«{truncated_transcription}»</i>\n\n"
+                f"{evaluation}"
+            )
+            await update.message.reply_text(
+                text=final_response_short, 
+                parse_mode='HTML', 
+                reply_markup=reply_markup
+            )
+        
+        # Clear voice response state
+        context.user_data.pop('waiting_for_voice_response', None)
+        context.user_data.pop('current_speaking_prompt', None)
+        context.user_data.pop('current_speaking_part', None)
+        
+        logger.info(f"✅ Voice message evaluation completed for user {user.id}")
+        
+        # Delete the processing message
+        try:
+            await processing_message.delete()
+        except:
+            pass  # Ignore if message already deleted or can't be deleted
+        
+    except Exception as e:
+        logger.error(f"🔥 Error processing voice message for user {user.id}: {e}")
+        
+        try:
+            await processing_message.edit_text(
+                "❌ Произошла ошибка при обработке голосового сообщения.\n"
+                "Попробуйте еще раз позже.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Попробовать снова", callback_data="menu_speaking")],
+                    [InlineKeyboardButton("📋 Главное меню", callback_data="back_to_main_menu")],
+                ])
+            )
+        except:
+            # If we can't edit the processing message, send a new one
+            await update.message.reply_text(
+                "❌ Произошла ошибка при обработке голосового сообщения.\n"
+                "Попробуйте еще раз позже.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Попробовать снова", callback_data="menu_speaking")],
+                    [InlineKeyboardButton("📋 Главное меню", callback_data="back_to_main_menu")],
+                ])
+            )
+
 # --- Conversation Handlers Setup (for main.py) ---
 writing_conversation_handler = ConversationHandler(
     entry_points=[CommandHandler("writing", start_writing_task)],
@@ -1291,6 +1498,7 @@ vocabulary_conversation_handler = ConversationHandler(
     per_message=False
 )
 
+@require_access
 async def handle_writing_task_type_global(update: Update, context: CallbackContext) -> None:
     """Handle writing task type selection - for global handler (menu-based access)"""
     user = update.effective_user
@@ -1310,6 +1518,7 @@ async def handle_writing_task_type_global(update: Update, context: CallbackConte
         reply_markup=reply_markup
     )
 
+@require_access
 async def handle_save_word_to_vocabulary(update: Update, context: CallbackContext) -> None:
     """Handle saving word to user's personal vocabulary"""
     user = update.effective_user
@@ -1366,6 +1575,7 @@ async def handle_save_word_to_vocabulary(update: Update, context: CallbackContex
             ])
         )
 
+@require_access
 async def handle_profile_vocabulary(update: Update, context: CallbackContext) -> None:
     """Handle viewing user's personal vocabulary"""
     user = update.effective_user
@@ -1413,6 +1623,7 @@ async def handle_profile_vocabulary(update: Update, context: CallbackContext) ->
     # Split long message if needed
     await send_long_message(update, context, vocabulary_text, reply_markup, parse_mode='HTML')
 
+@require_access
 async def handle_clear_vocabulary(update: Update, context: CallbackContext) -> None:
     """Handle clearing user's vocabulary with confirmation"""
     user = update.effective_user
@@ -1441,6 +1652,7 @@ async def handle_clear_vocabulary(update: Update, context: CallbackContext) -> N
         parse_mode='HTML'
     )
 
+@require_access
 async def handle_confirm_clear_vocabulary(update: Update, context: CallbackContext) -> None:
     """Handle confirmed vocabulary clearing"""
     user = update.effective_user
@@ -1805,11 +2017,69 @@ async def admin_whitelist_status_command(update: Update, context: CallbackContex
             status_text += f"• @{username}\n"
     
     status_text += f"\n💡 <b>Управление:</b>\n"
-    status_text += f"• /adduser_123456 - Добавить пользователя\n"
-    status_text += f"• /removeuser_123456 - Удалить пользователя\n"
+    status_text += f"• /adduser_123456 - Добавить по ID\n"
+    status_text += f"• /removeuser_123456 - Удалить по ID\n"
+    status_text += f"• /addusername_username - Добавить по username\n"
+    status_text += f"• /removeusername_username - Удалить по username\n"
     
     await update.message.reply_text(status_text, parse_mode='HTML')
 
+@require_admin
+async def admin_add_username_command(update: Update, context: CallbackContext) -> None:
+    """Handle /addusername_<username> command"""
+    command_text = update.message.text
+    try:
+        parts = command_text.split('_', 1)
+        if len(parts) != 2:
+            await update.message.reply_text("❌ Неверный формат команды. Используйте: /addusername_username")
+            return
+            
+        target_username = parts[1].lower().replace('@', '')  # Remove @ if present
+        
+        # Add to username whitelist programmatically (for session only)
+        if target_username not in [u.lower() for u in config.AUTHORIZED_USERNAMES]:
+            config.AUTHORIZED_USERNAMES.append(target_username)
+            await update.message.reply_text(
+                f"✅ Username @{target_username} добавлен в whitelist!\n"
+                f"⚠️ Чтобы сохранить навсегда, добавьте username в config.py"
+            )
+        else:
+            await update.message.reply_text(f"⚠️ Username @{target_username} уже в whitelist!")
+            
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+@require_admin
+async def admin_remove_username_command(update: Update, context: CallbackContext) -> None:
+    """Handle /removeusername_<username> command"""
+    command_text = update.message.text
+    try:
+        parts = command_text.split('_', 1)
+        if len(parts) != 2:
+            await update.message.reply_text("❌ Неверный формат команды. Используйте: /removeusername_username")
+            return
+            
+        target_username = parts[1].lower().replace('@', '')  # Remove @ if present
+        
+        # Remove from username whitelist programmatically (for session only)
+        usernames_lower = [u.lower() for u in config.AUTHORIZED_USERNAMES]
+        if target_username in usernames_lower:
+            # Find and remove the original case username
+            for username in config.AUTHORIZED_USERNAMES:
+                if username.lower() == target_username:
+                    config.AUTHORIZED_USERNAMES.remove(username)
+                    break
+            await update.message.reply_text(
+                f"✅ Username @{target_username} удален из whitelist!\n"
+                f"⚠️ Чтобы сохранить навсегда, удалите username из config.py"
+            )
+        else:
+            await update.message.reply_text(f"⚠️ Username @{target_username} не найден в whitelist!")
+            
+    except Exception as e:
+        await update.message.reply_text(f"❌ Ошибка: {e}")
+
+@require_access
 async def handle_writing_check_global(update: Update, context: CallbackContext) -> None:
     """Handle the 'Check Essay' button press - for global handler (menu-based access)"""
     user = update.effective_user

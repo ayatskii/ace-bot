@@ -446,3 +446,42 @@ def explain_grammar_structure(grammar_topic: str) -> str:
     **Сделай объяснение ясным, кратким и практичным для подготовки к IELTS. Не добавляй никакого заключительного текста. Если грамматическая тема указана на русском языке, объясни её на русском языке.**
     """
     return generate_text(prompt)
+
+def evaluate_speaking_response(speaking_prompt: str, user_transcription: str, part: str) -> str:
+    """Evaluates IELTS speaking response based on official criteria and provides band score."""
+    prompt = f"""
+    Task: Evaluate an IELTS Speaking {part} response according to the official IELTS Speaking band descriptors.
+    
+    Speaking Prompt: {speaking_prompt}
+    Student's Response: {user_transcription}
+    
+    Instructions: Assess the response based on the four official IELTS Speaking criteria:
+    1. Fluency and Coherence (FC)
+    2. Lexical Resource (LR) 
+    3. Grammatical Range and Accuracy (GRA)
+    4. Pronunciation (P)
+    
+                    **Your output must be CONCISE and fit in one message. Follow this exact format:**
+
+                🎤 <b>IELTS SPEAKING - {part.upper()}</b>
+
+                🎯 <b>Балл:</b> [Score]/9
+
+                📝 <b>Краткая оценка:</b>
+                [Brief 1-2 sentence summary]
+
+                <b>📊 АНАЛИЗ ПО КРИТЕРИЯМ:</b>
+
+                🗣️ <b>Беглость (FC):</b> [Score] - [Brief 1 sentence evaluation]
+                📚 <b>Лексика (LR):</b> [Score] - [Brief 1 sentence evaluation]  
+                🔤 <b>Грамматика (GRA):</b> [Score] - [Brief 1 sentence evaluation]
+                🎵 <b>Произношение (P):</b> [Score] - [Brief 1 sentence evaluation]
+
+                <b>🎯 РЕКОМЕНДАЦИИ:</b>
+                ✅ <b>Сильные стороны:</b> [1-2 key strengths in one sentence]
+                🔧 <b>Улучшить:</b> [2-3 specific improvement areas with actionable advice in 1-2 sentences]
+                💡 <b>Совет:</b> [One concrete practice recommendation]
+
+                **Keep response under 2000 characters total. Be concise but helpful. Respond in Russian. Use only HTML tags shown above.**
+    """
+    return generate_writing_text(prompt)

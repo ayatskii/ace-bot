@@ -48,12 +48,18 @@ def main():
     # Whitelist management commands
     application.add_handler(MessageHandler(filters.Regex(r'^/adduser_\d+$'), bot_handlers.admin_add_user_command))
     application.add_handler(MessageHandler(filters.Regex(r'^/removeuser_\d+$'), bot_handlers.admin_remove_user_command))
+    application.add_handler(MessageHandler(filters.Regex(r'^/addusername_.+$'), bot_handlers.admin_add_username_command))
+    application.add_handler(MessageHandler(filters.Regex(r'^/removeusername_.+$'), bot_handlers.admin_remove_username_command))
     
     logger.info("✅ Command handlers registered.")
 
     # --- Global Text Input Handlers (for topic selection) ---
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot_handlers.handle_global_text_input))
-    logger.info("✅ Global text input handlers registered.")
+    
+    # --- Voice Message Handler (for speaking practice) ---
+    application.add_handler(MessageHandler(filters.VOICE, bot_handlers.handle_voice_message))
+    
+    logger.info("✅ Global text input and voice message handlers registered.")
 
     # --- Callback Query Handlers (for all inline buttons) ---
     # Handlers for initial menu selections

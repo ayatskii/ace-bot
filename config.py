@@ -10,6 +10,9 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 # Gemini API Key
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
+# Eleven Labs API Key for voice transcription
+ELEVEN_LABS_API_KEY = os.getenv('ELEVEN_LABS_API_KEY')
+
 # Whitelist Configuration (ENABLED)
 # Add user IDs of authorized users here
 AUTHORIZED_USER_IDS = [
@@ -24,7 +27,8 @@ AUTHORIZED_USER_IDS = [
 AUTHORIZED_USERNAMES = [
     # Add usernames here (without @ symbol)
     # "ayatskii",     # Example: Your username
-    # "username",     # Example: Another username
+    # "someuser",     # Example: Another username
+    # "student123",   # Example: Student username
 ]
 
 # Optional: Enable/disable whitelist
