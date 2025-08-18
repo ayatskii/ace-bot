@@ -37,6 +37,7 @@ ENABLE_WHITELIST = True  # Set to True to allow only authorized users
 # Admin Configuration
 ADMIN_USER_IDS = [
     546321644, 
+    504207862
 ]
 
 # Admin Features
