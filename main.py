@@ -28,6 +28,7 @@ def main():
     application.add_handler(bot_handlers.writing_conversation_handler)
     application.add_handler(bot_handlers.grammar_conversation_handler)
     application.add_handler(bot_handlers.vocabulary_conversation_handler)
+    application.add_handler(bot_handlers.full_speaking_simulation_handler)
     logger.info("✅ Conversation handlers registered.")
 
     # --- Standard Command Handlers ---
@@ -86,6 +87,12 @@ def main():
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_detailed_stats, pattern=r'^admin_stats$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_help, pattern=r'^admin_help$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_users_pagination, pattern=r'^admin_users_page_\d+$'))
+    
+    # Add handlers for full speaking simulation
+    application.add_handler(CallbackQueryHandler(bot_handlers.restart_full_simulation, pattern=r'^restart_full_sim$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.abandon_full_simulation, pattern=r'^abandon_full_sim$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.skip_full_sim_part, pattern=r'^skip_part_\d$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_speaking_stats, pattern=r'^speaking_stats$'))
     
     logger.info("✅ Callback query handlers registered.")
 

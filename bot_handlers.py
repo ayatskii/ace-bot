@@ -4,16 +4,23 @@ import logging
 import re
 import sqlite3
 import config
+from datetime import datetime
 from database import db
 
 from gemini_api import (
     get_random_word_details, generate_ielts_writing_task, evaluate_writing,
     generate_speaking_question, generate_ielts_strategies, explain_grammar_structure,
-    get_topic_specific_words, evaluate_speaking_response
+    get_topic_specific_words, evaluate_speaking_response, evaluate_speaking_response_for_simulation,
+    extract_scores_from_evaluation
 )
 from audio_processor import audio_processor
 
 logger = logging.getLogger(__name__)
+
+# Add these new conversation states for full speaking simulation
+FULL_SIM_PART_1 = 1
+FULL_SIM_PART_2 = 2
+FULL_SIM_PART_3 = 3
 
 # --- Admin Utility Functions ---
 def is_admin(user_id: int) -> bool:
@@ -169,6 +176,294 @@ def format_grammar_text(text: str) -> str:
     
     # Step 6: Fix spacing issues around bullet points and examples
     formatted_text = re.sub(r'\n\s*\*\s+', '\n• ', formatted_text)
+    
+    return formatted_text
+
+# Add these utility functions for scoring and simulation
+def calculate_weighted_overall_score(part_scores: dict) -> float:
+    """Calculate weighted overall score based on IELTS importance"""
+    PART_WEIGHTS = {
+        1: 0.25,  # Part 1: 25% of total score
+        2: 0.35,  # Part 2: 35% of total score (most important)
+        3: 0.40   # Part 3: 40% of total score
+    }
+    
+    total_score = 0
+    total_weight = 0
+    
+    for part, score in part_scores.items():
+        if score is not None and score > 0:
+            total_score += score * PART_WEIGHTS[part]
+            total_weight += PART_WEIGHTS[part]
+    
+    if total_weight == 0:
+        return 0.0
+    
+    return round(total_score / total_weight, 1)
+
+def determine_ielts_band(score: float) -> float:
+    """Convert numerical score to IELTS band score"""
+    if score >= 8.5:
+        return 9.0
+    elif score >= 7.5:
+        return 8.0
+    elif score >= 6.5:
+        return 7.0
+    elif score >= 5.5:
+        return 6.0
+    elif score >= 4.5:
+        return 5.0
+    elif score >= 3.5:
+        return 4.0
+    else:
+        return 3.5
+
+def generate_comprehensive_feedback(part_scores: dict, overall_band: float) -> str:
+    """Generate comprehensive feedback based on part scores"""
+    feedback_parts = []
+    
+    # Overall assessment
+    if overall_band >= 8.0:
+        feedback_parts.append("🎯 <b>Отличный результат!</b> Ваш уровень соответствует высоким требованиям IELTS.")
+    elif overall_band >= 6.5:
+        feedback_parts.append("✅ <b>Хороший результат!</b> Вы готовы к большинству университетских программ.")
+    elif overall_band >= 5.5:
+        feedback_parts.append("⚠️ <b>Удовлетворительный результат.</b> Рекомендуется дополнительная практика.")
+    else:
+        feedback_parts.append("📚 <b>Требуется улучшение.</b> Рекомендуется интенсивная подготовка.")
+    
+    # Part-specific feedback
+    for part, score in part_scores.items():
+        if score >= 7.0:
+            feedback_parts.append(f"• <b>Часть {part}:</b> Сильная сторона")
+        elif score >= 5.5:
+            feedback_parts.append(f"• <b>Часть {part}:</b> Стабильная работа")
+        else:
+            feedback_parts.append(f"• <b>Часть {part}:</b> Требует внимания")
+    
+    return "\n".join(feedback_parts)
+
+def calculate_simulation_time(context: CallbackContext) -> str:
+    """Calculate total simulation time"""
+    start_time = context.user_data.get('simulation_start_time', 0)
+    if start_time == 0:
+        return "Неизвестно"
+    
+    import time
+    elapsed = int(time.time() - start_time)
+    minutes = elapsed // 60
+    seconds = elapsed % 60
+    
+    if minutes > 0:
+        return f"{minutes} мин {seconds} сек"
+    else:
+        return f"{seconds} сек"
+
+def calculate_overall_criteria_scores(part_scores: dict, part_evaluations: dict) -> dict:
+    """Calculate overall scores for each IELTS criterion across all parts"""
+    criteria_scores = {
+        'fluency': [],
+        'vocabulary': [],
+        'grammar': [],
+        'pronunciation': []
+    }
+    
+    # Extract individual criterion scores from evaluations
+    for part_num, evaluation in part_evaluations.items():
+        if evaluation:
+            # Try to extract scores from evaluation text
+            scores = extract_scores_from_evaluation(evaluation)
+            if scores:
+                for criterion in criteria_scores.keys():
+                    if criterion in scores:
+                        criteria_scores[criterion].append(scores[criterion])
+    
+    # Calculate averages for each criterion
+    overall_criteria = {}
+    for criterion, scores in criteria_scores.items():
+        if scores:
+            overall_criteria[criterion] = round(sum(scores) / len(scores), 1)
+        else:
+            overall_criteria[criterion] = 0.0
+    
+    return overall_criteria
+
+def generate_detailed_analysis(part_scores: dict, part_transcriptions: dict, 
+                              part_evaluations: dict, overall_criteria: dict) -> str:
+    """Generate detailed analysis with official IELTS criteria"""
+    
+    analysis = "📊 <b>ДЕТАЛЬНЫЙ АНАЛИЗ ПО КРИТЕРИЯМ IELTS</b>\n\n"
+    
+    # Overall performance summary
+    total_score = sum(part_scores.values())
+    avg_score = total_score / len(part_scores) if part_scores else 0
+    
+    analysis += f"🏆 <b>ОБЩАЯ ПРОИЗВОДИТЕЛЬНОСТЬ</b>\n"
+    analysis += f"• Средний балл: {avg_score:.1f}/9\n"
+    analysis += f"• Общий балл: {total_score}/27\n\n"
+    
+    # Official IELTS criteria analysis
+    analysis += "📋 <b>ОФИЦИАЛЬНЫЕ КРИТЕРИИ IELTS SPEAKING</b>\n\n"
+    
+    # 1. Fluency and Coherence
+    fluency_score = overall_criteria.get('fluency', 0)
+    analysis += f"🎯 <b>1. Fluency and Coherence (Беглость и связность): {fluency_score}/9</b>\n"
+    analysis += get_fluency_feedback(fluency_score)
+    analysis += "\n"
+    
+    # 2. Lexical Resource
+    vocab_score = overall_criteria.get('vocabulary', 0)
+    analysis += f"📚 <b>2. Lexical Resource (Лексический запас): {vocab_score}/9</b>\n"
+    analysis += get_vocabulary_feedback(vocab_score)
+    analysis += "\n"
+    
+    # 3. Grammatical Range and Accuracy
+    grammar_score = overall_criteria.get('grammar', 0)
+    analysis += f"🔤 <b>3. Grammatical Range and Accuracy (Грамматика): {grammar_score}/9</b>\n"
+    analysis += get_grammar_feedback(grammar_score)
+    analysis += "\n"
+    
+    # 4. Pronunciation
+    pron_score = overall_criteria.get('pronunciation', 0)
+    analysis += f"🎤 <b>4. Pronunciation (Произношение): {pron_score}/9</b>\n"
+    analysis += get_pronunciation_feedback(pron_score)
+    analysis += "\n"
+    
+    # Part-by-part analysis
+    analysis += "📊 <b>АНАЛИЗ ПО ЧАСТЯМ</b>\n\n"
+    for part_num in sorted(part_scores.keys()):
+        score = part_scores[part_num]
+        transcription = part_transcriptions.get(part_num, "Недоступно")
+        evaluation = part_evaluations.get(part_num, "Недоступно")
+        
+        analysis += f"<b>Часть {part_num}:</b> {score}/9\n"
+        analysis += f"<i>Ответ: {transcription[:100]}{'...' if len(transcription) > 100 else ''}</i>\n"
+        analysis += f"<i>Оценка: {evaluation[:200]}{'...' if len(evaluation) > 200 else ''}</i>\n\n"
+    
+    return analysis
+
+def get_fluency_feedback(score: float) -> str:
+    """Get feedback for fluency and coherence"""
+    if score >= 8.0:
+        return "Отличная беглость речи, логичная структура ответов"
+    elif score >= 6.5:
+        return "Хорошая беглость, иногда есть паузы, но в целом связно"
+    elif score >= 5.5:
+        return "Удовлетворительная беглость, заметны паузы и повторения"
+    else:
+        return "Требуется работа над беглостью и связностью речи"
+
+def get_vocabulary_feedback(score: float) -> str:
+    """Get feedback for lexical resource"""
+    if score >= 8.0:
+        return "Богатый словарный запас, точное использование слов"
+    elif score >= 6.5:
+        return "Хороший словарный запас, иногда есть неточности"
+    elif score >= 5.5:
+        return "Достаточный словарный запас для базовой коммуникации"
+    else:
+        return "Требуется расширение словарного запаса"
+
+def get_grammar_feedback(score: float) -> str:
+    """Get feedback for grammatical range and accuracy"""
+    if score >= 8.0:
+        return "Отличное владение грамматикой, разнообразные конструкции"
+    elif score >= 6.5:
+        return "Хорошее владение грамматикой, редкие ошибки"
+    elif score >= 5.5:
+        return "Удовлетворительное владение грамматикой, есть ошибки"
+    else:
+        return "Требуется работа над грамматическими правилами"
+
+def get_pronunciation_feedback(score: float) -> str:
+    """Get feedback for pronunciation"""
+    if score >= 8.0:
+        return "Отличное произношение, четкая артикуляция"
+    elif score >= 6.5:
+        return "Хорошее произношение, понятно для слушателя"
+    elif score >= 5.5:
+        return "Удовлетворительное произношение, иногда неясно"
+    else:
+        return "Требуется работа над произношением и интонацией"
+
+
+
+    
+
+    
+    # General recommendations
+    if score < 6.5:
+        recommendations.append("• Увеличьте время практики speaking")
+        recommendations.append("• Работайте с преподавателем или репетитором")
+        recommendations.append("• Используйте приложения для изучения языка")
+    
+
+
+
+
+def determine_ielts_band(score: float) -> float:
+    """Convert numerical score to IELTS band score"""
+    if score >= 8.5:
+        return 9.0
+    elif score >= 8.0:
+        return 8.5
+    elif score >= 7.5:
+        return 8.0
+    elif score >= 7.0:
+        return 7.5
+    elif score >= 6.5:
+        return 7.0
+    elif score >= 6.0:
+        return 6.5
+    elif score >= 5.5:
+        return 6.0
+    elif score >= 5.0:
+        return 5.5
+    elif score >= 4.5:
+        return 5.0
+    else:
+        return 4.0
+
+def calculate_simulation_time(context: CallbackContext) -> str:
+    """Calculate and format simulation time"""
+    import time
+    start_time = context.user_data.get('simulation_start_time', time.time())
+    elapsed = int(time.time() - start_time)
+    minutes = elapsed // 60
+    seconds = elapsed % 60
+    return f"{minutes}м {seconds}с"
+
+def generate_comprehensive_feedback(part_scores: dict, overall_band: float) -> str:
+    """Generate comprehensive feedback based on scores"""
+    feedback = "🎯 <b>АНАЛИЗ РЕЗУЛЬТАТОВ:</b>\n\n"
+    
+    # Analyze strengths and weaknesses
+    strengths = []
+    weaknesses = []
+    
+    for part, score in part_scores.items():
+        if score >= 7.0:
+            strengths.append(f"Часть {part} ({score}/9)")
+        elif score < 6.0:
+            weaknesses.append(f"Часть {part} ({score}/9)")
+    
+    if strengths:
+        feedback += f"✅ <b>Сильные стороны:</b> {', '.join(strengths)}\n\n"
+    
+    if weaknesses:
+        feedback += f"🔧 <b>Требуют улучшения:</b> {', '.join(weaknesses)}\n\n"
+    
+    # Overall band interpretation
+    if overall_band >= 8.0:
+        feedback += "🏆 <b>Отличный результат!</b> Ваш уровень близок к носителю языка.\n"
+    elif overall_band >= 7.0:
+        feedback += "🎯 <b>Хороший результат!</b> Вы демонстрируете уверенное владение языком.\n"
+    elif overall_band >= 6.0:
+        feedback += "📈 <b>Удовлетворительный результат.</b> Есть потенциал для улучшения.\n"
+    else:
+        feedback += "📚 <b>Требуется дополнительная практика.</b> Рекомендуем больше тренироваться.\n"
+    
+    return feedback
     
     # Step 7: Ensure proper line breaks for readability
     formatted_text = re.sub(r'\n{3,}', '\n\n', formatted_text)
@@ -529,13 +824,23 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
     elif data == "menu_speaking":
         # Handle speaking menu selection
         keyboard = [
+            [InlineKeyboardButton("🎯 Полная симуляция экзамена", callback_data="full_speaking_sim")],
             [InlineKeyboardButton("Part 1: Короткие вопросы", callback_data="speaking_part_1")],
             [InlineKeyboardButton("Part 2: Карточка-монолог", callback_data="speaking_part_2")],
             [InlineKeyboardButton("Part 3: Дискуссия", callback_data="speaking_part_3")],
+            [InlineKeyboardButton("📈 Статистика прогресса", callback_data="speaking_stats")],
             [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("🗣️ Выберите часть устного экзамена для практики:", reply_markup=reply_markup)
+        await query.edit_message_text(
+            "🗣️ <b>IELTS Speaking Practice</b>\n\n"
+            "Выберите режим практики:\n\n"
+            "🎯 <b>Полная симуляция</b> - пройдите все три части экзамена подряд\n"
+            "📋 <b>Отдельные части</b> - практикуйте конкретную часть\n"
+            "📊 <b>Аналитика</b> - отслеживайте свой прогресс",
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
         
     elif data == "menu_info":
         # Handle info menu selection
@@ -586,11 +891,32 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
                 profile_text += f"\n📚 Слов в словаре: 0"
                 logger.error(f"🔥 Failed to get vocabulary count: {e}")
             
-            # Skip registration date for now to avoid errors
+            # Add speaking statistics safely
+            try:
+                speaking_stats = db.get_user_speaking_stats(user.id)
+                profile_text += f"\n\n🗣️ <b>Статистика говорения:</b>"
+                profile_text += f"\n📊 Всего симуляций: {speaking_stats['total_simulations']}"
+                profile_text += f"\n✅ Завершено: {speaking_stats['completed_simulations']}"
+                if speaking_stats['average_overall_score'] > 0:
+                    profile_text += f"\n📈 Средний балл: {speaking_stats['average_overall_score']:.1f}/9.0"
+                if speaking_stats['best_overall_score'] > 0:
+                    profile_text += f"\n🏆 Лучший результат: {speaking_stats['best_overall_score']:.1f}/9.0"
+                if speaking_stats['total_practice_time_minutes'] > 0:
+                    profile_text += f"\n⏱️ Время практики: {speaking_stats['total_practice_time_minutes']} мин"
+                if speaking_stats['last_simulation_date']:
+                    profile_text += f"\n🕐 Последняя симуляция: {speaking_stats['last_simulation_date']}"
+                logger.info(f"✅ Speaking stats for user {user.id}: {speaking_stats}")
+            except Exception as e:
+                profile_text += f"\n\n🗣️ <b>Статистика говорения:</b>"
+                profile_text += f"\n📊 Всего симуляций: 0"
+                profile_text += f"\n✅ Завершено: 0"
+                logger.error(f"🔥 Failed to get speaking stats: {e}")
+            
             logger.info(f"📝 Profile text created: {len(profile_text)} chars")
             
             keyboard = [
                 [InlineKeyboardButton("📖 Мой словарь", callback_data="profile_vocabulary")],
+                [InlineKeyboardButton("📊 Статистика говорения", callback_data="speaking_stats")],
                 [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -960,12 +1286,25 @@ async def handle_speaking_command(update: Update, context: CallbackContext, forc
     if force_new_message:
         chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
         keyboard = [
+            [InlineKeyboardButton("🎯 Полная симуляция экзамена", callback_data="full_speaking_sim")],
             [InlineKeyboardButton("Part 1: Короткие вопросы", callback_data="speaking_part_1")],
             [InlineKeyboardButton("Part 2: Карточка-монолог", callback_data="speaking_part_2")],
             [InlineKeyboardButton("Part 3: Дискуссия", callback_data="speaking_part_3")],
+            [InlineKeyboardButton("📊 История симуляций", callback_data="speaking_history")],
+            [InlineKeyboardButton("📈 Статистика прогресса", callback_data="speaking_stats")],
+            [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await context.bot.send_message(chat_id=chat_id, text="🗣️ Выберите часть устного экзамена для практики:", reply_markup=reply_markup)
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="🗣️ <b>IELTS Speaking Practice</b>\n\n"
+                 "Выберите режим практики:\n\n"
+                 "🎯 <b>Полная симуляция</b> - пройдите все три части экзамена подряд\n"
+                 "📋 <b>Отдельные части</b> - практикуйте конкретную часть\n"
+                 "📊 <b>Аналитика</b> - отслеживайте свой прогресс",
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
         return
     if update.message:
         target = update.message
@@ -974,12 +1313,23 @@ async def handle_speaking_command(update: Update, context: CallbackContext, forc
     else:
         return
     keyboard = [
+        [InlineKeyboardButton("🎯 Полная симуляция экзамена", callback_data="full_speaking_sim")],
         [InlineKeyboardButton("Part 1: Короткие вопросы", callback_data="speaking_part_1")],
         [InlineKeyboardButton("Part 2: Карточка-монолог", callback_data="speaking_part_2")],
         [InlineKeyboardButton("Part 3: Дискуссия", callback_data="speaking_part_3")],
+        [InlineKeyboardButton("📈 Статистика прогресса", callback_data="speaking_stats")],
+        [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await target.reply_text("🗣️ Выберите часть устного экзамена для практики:", reply_markup=reply_markup)
+    await target.reply_text(
+        "🗣️ <b>IELTS Speaking Practice</b>\n\n"
+        "Выберите режим практики:\n\n"
+        "🎯 <b>Полная симуляция</b> - пройдите все три части экзамена подряд\n"
+        "📋 <b>Отдельные части</b> - практикуйте конкретную часть\n"
+        "📊 <b>Аналитика</b> - отслеживайте свой прогресс",
+        parse_mode='HTML',
+        reply_markup=reply_markup
+    )
 
 @require_access
 async def speaking_part_callback(update: Update, context: CallbackContext) -> None:
@@ -1503,6 +1853,551 @@ async def handle_voice_message(update: Update, context: CallbackContext) -> None
                 ])
             )
 
+# --- Full Speaking Simulation Functions ---
+async def start_full_speaking_simulation(update: Update, context: CallbackContext) -> int:
+    """Start a full speaking simulation session"""
+    user = update.effective_user
+    
+    if not check_user_access(user.id):
+        return ConversationHandler.END
+    
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        # Create database session
+        session_id = db.create_speaking_simulation(user.id)
+        if not session_id:
+            await query.edit_message_text(
+                "❌ Не удалось создать сессию симуляции. Попробуйте позже.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Назад", callback_data="menu_speaking")]
+                ])
+            )
+            return ConversationHandler.END
+        
+        # Initialize simulation context
+        import time
+        context.user_data.update({
+            'full_simulation_mode': True,
+            'simulation_session_id': session_id,
+            'simulation_start_time': time.time(),
+            'current_part': 1,
+            'part_scores': {},
+            'part_transcriptions': {},
+            'part_evaluations': {},
+            'user_id': user.id
+        })
+        
+        # Generate Part 1 question
+        speaking_prompt = generate_speaking_question(part="Part 1")
+        context.user_data['current_speaking_prompt'] = speaking_prompt
+        
+        # Show Part 1 instructions
+        instructions = (
+            f"🎯 <b>ПОЛНАЯ СИМУЛЯЦИЯ IELTS SPEAKING</b>\n\n"
+            f"📋 <b>Часть 1 из 3: Короткие вопросы</b>\n\n"
+            f"{speaking_prompt}\n\n"
+            f"🎤 <b>Запишите голосовой ответ</b>\n"
+            f"⏱️ <b>Рекомендуемое время:</b> 30-60 секунд\n\n"
+            f"<i>💡 <b>Важно:</b> Оценки по частям не показываются до завершения всей симуляции.\n"
+            f"В конце вы получите детальный анализ по всем критериям IELTS.</i>"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("⏭️ Пропустить часть", callback_data="skip_part_1")],
+            [InlineKeyboardButton("❌ Отменить симуляцию", callback_data="abandon_full_sim")]
+        ]
+        
+        await query.edit_message_text(
+            text=instructions,
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+        logger.info(f"🎯 User {user.id} started full speaking simulation {session_id}")
+        return FULL_SIM_PART_1
+        
+    except Exception as e:
+        logger.error(f"🔥 Error starting full simulation for user {user.id}: {e}")
+        await query.edit_message_text(
+            "❌ Произошла ошибка при запуске симуляции. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад", callback_data="menu_speaking")]
+            ])
+        )
+        return ConversationHandler.END
+
+async def handle_full_sim_part_1(update: Update, context: CallbackContext) -> int:
+    """Handle Part 1 response and move to Part 2"""
+    return await handle_full_sim_part_response(update, context, 1, FULL_SIM_PART_2)
+
+async def handle_full_sim_part_2(update: Update, context: CallbackContext) -> int:
+    """Handle Part 2 response and move to Part 3"""
+    return await handle_full_sim_part_response(update, context, 2, FULL_SIM_PART_3)
+
+async def handle_full_sim_part_3(update: Update, context: CallbackContext) -> int:
+    """Handle Part 3 response and complete simulation"""
+    return await handle_full_sim_part_response(update, context, 3, None)
+
+async def handle_full_sim_part_response(update: Update, context: CallbackContext, 
+                                      part_number: int, next_state: int) -> int:
+    """Generic handler for all part responses"""
+    user = update.effective_user
+    
+    try:
+        # Process voice message
+        transcription = await process_voice_message_for_simulation(update, context)
+        if not transcription:
+            return next_state - 1  # Stay in current state
+        
+        # Get stored prompt
+        speaking_prompt = context.user_data.get('current_speaking_prompt', 'Unknown prompt')
+        
+        # Evaluate response
+        evaluation = evaluate_speaking_response_for_simulation(
+            speaking_prompt, transcription, f"Part {part_number}"
+        )
+        
+        # Extract scores
+        scores = extract_scores_from_evaluation(evaluation)
+        
+        # Store response data
+        context.user_data['part_scores'][part_number] = scores['overall']
+        context.user_data['part_transcriptions'][part_number] = transcription
+        context.user_data['part_evaluations'][part_number] = evaluation
+        
+        # Save to database
+        session_id = context.user_data['simulation_session_id']
+        db.save_part_response(
+            session_id, part_number, speaking_prompt, 
+            transcription, scores, evaluation
+        )
+        
+        # Show part completion message (without scores)
+        completion_msg = (
+            f"✅ <b>Часть {part_number} завершена!</b>\n\n"
+            f"🎤 <b>Ваш ответ записан и обработан</b>\n\n"
+        )
+        
+        if next_state is None:
+            # Last part completed, show completion message
+            completion_msg += (
+                f" <b>Все части завершены!</b>\n\n"
+                f"⏳ Рассчитываю общий результат и готовлю детальный анализ..."
+            )
+            keyboard = [
+                [InlineKeyboardButton("⏳ Обрабатываю...", callback_data="processing")]
+            ]
+            
+            await update.message.reply_text(
+                text=completion_msg,
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            
+            # Calculate final results and end conversation
+            await calculate_and_show_final_results(update, context)
+            return ConversationHandler.END
+        else:
+            # Generate next part question
+            next_part_prompt = generate_speaking_question(part=f"Part {part_number + 1}")
+            context.user_data['current_speaking_prompt'] = next_part_prompt
+            
+            completion_msg += (
+                f"🔄 <b>Переходим к части {part_number + 1}</b>\n\n"
+                f"{next_part_prompt}\n\n"
+                f"🎤 <b>Запишите голосовой ответ</b>\n"
+                f"⏱️ <b>Рекомендуемое время:</b> "
+                f"{'1-2 минуты' if part_number + 1 == 2 else '30-90 секунд'}"
+            )
+            
+            keyboard = [
+                [InlineKeyboardButton("⏭️ Пропустить часть", callback_data=f"skip_part_{part_number + 1}")],
+                [InlineKeyboardButton("❌ Отменить симуляцию", callback_data="abandon_full_sim")]
+            ]
+            
+            await update.message.reply_text(
+                text=completion_msg,
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            
+            return next_state
+        
+    except Exception as e:
+        logger.error(f"🔥 Error processing part {part_number} response: {e}")
+        await update.message.reply_text(
+            f"❌ Произошла ошибка при обработке части {part_number}. Попробуйте еще раз.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Повторить", callback_data=f"retry_part_{part_number}")],
+                [InlineKeyboardButton("❌ Отменить", callback_data="abandon_full_sim")]
+            ])
+        )
+        return next_state - 1
+
+async def process_voice_message_for_simulation(update: Update, context: CallbackContext) -> str:
+    """Process voice message for simulation mode"""
+    user = update.effective_user
+    
+    try:
+        # Get voice file
+        voice = update.message.voice
+        if not voice:
+            await update.message.reply_text(
+                "❌ Пожалуйста, отправьте голосовое сообщение.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ Отменить", callback_data="abandon_full_sim")]
+                ])
+            )
+            return None
+        
+        # Send processing message
+        processing_msg = await update.message.reply_text(
+            "🔄 <b>Обрабатываю голосовое сообщение...</b>\n\n"
+            "📥 Загружаю аудио файл...",
+            parse_mode='HTML'
+        )
+        
+        # Download and transcribe
+        file_info = await context.bot.get_file(voice.file_id)
+        file_url = file_info.file_path
+        
+        # Update processing message
+        await processing_msg.edit_text(
+            "🔄 <b>Обрабатываю голосовое сообщение...</b>\n\n"
+            "✅ Аудио файл загружен\n"
+            "🎤 Распознаю речь...",
+            parse_mode='HTML'
+        )
+        
+        # Create temporary file
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.ogg') as temp_file:
+            temp_path = temp_file.name
+        
+        # Download file
+        if not await audio_processor.download_voice_file(file_url, temp_path):
+            await processing_msg.edit_text(
+                "❌ <b>Ошибка обработки</b>\n\n"
+                "Не удалось загрузить голосовое сообщение.\n"
+                "Попробуйте еще раз.",
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ Отменить", callback_data="abandon_full_sim")]
+                ])
+            )
+            return None
+        
+        # Update processing message
+        await processing_msg.edit_text(
+            "🔄 <b>Обрабатываю голосовое сообщение...</b>\n\n"
+            "✅ Аудио файл загружен\n"
+            "✅ Файл сохранен\n"
+            "🎤 Распознаю речь...",
+            parse_mode='HTML'
+        )
+        
+        # Transcribe
+        transcription = audio_processor.transcribe_audio(temp_path)
+        
+        # Clean up
+        import os
+        os.unlink(temp_path)
+        
+        if not transcription:
+            await processing_msg.edit_text(
+                "❌ <b>Ошибка распознавания</b>\n\n"
+                "Не удалось распознать речь в сообщении.\n"
+                "Попробуйте говорить четче и громче.",
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ Отменить", callback_data="abandon_full_sim")]
+                ])
+            )
+            return None
+        
+        # Success message
+        await processing_msg.edit_text(
+            "✅ <b>Речь успешно распознана!</b>\n\n"
+            "📝 <b>Ваш ответ:</b>\n"
+            f"<i>«{transcription[:150]}{'...' if len(transcription) > 150 else ''}»</i>\n\n"
+            "⏳ Оцениваю ответ по критериям IELTS...",
+            parse_mode='HTML'
+        )
+        
+        return transcription
+        
+    except Exception as e:
+        logger.error(f"🔥 Error processing voice message: {e}")
+        await update.message.reply_text(
+            "❌ Произошла ошибка при обработке голосового сообщения.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Отменить", callback_data="abandon_full_sim")]
+            ])
+        )
+        return None
+
+async def calculate_and_show_final_results(update: Update, context: CallbackContext) -> None:
+    """Calculate final simulation results and display them"""
+    try:
+        # Calculate weighted overall score
+        part_scores = context.user_data['part_scores']
+        overall_score = calculate_weighted_overall_score(part_scores)
+        
+        # Determine IELTS band
+        overall_band = determine_ielts_band(overall_score)
+        
+        # Complete simulation in database with complete feedback
+        session_id = context.user_data['simulation_session_id']
+        
+        # Generate the complete results message first
+        feedback = generate_comprehensive_feedback(part_scores, overall_band)
+        
+        # Generate detailed analysis immediately
+        part_transcriptions = context.user_data.get('part_transcriptions', {})
+        part_evaluations = context.user_data.get('part_evaluations', {})
+        overall_criteria = calculate_overall_criteria_scores(part_scores, part_evaluations)
+        
+        detailed_analysis = generate_detailed_analysis(
+            part_scores, part_transcriptions, part_evaluations, overall_criteria
+        )
+        
+        # Create complete results message
+        results_message = (
+            f"🏆 <b>СИМУЛЯЦИЯ ЗАВЕРШЕНА!</b>\n\n"
+            f"🏆 <b>ОБЩИЙ РЕЗУЛЬТАТ: {overall_band}/9</b>\n\n"
+            f"📊 <b>ДЕТАЛЬНАЯ ОЦЕНКА ПО ЧАСТЯМ:</b>\n"
+            f"• Часть 1: {part_scores.get(1, 'N/A')}/9\n"
+            f"• Часть 2: {part_scores.get(2, 'N/A')}/9\n"
+            f"• Часть 3: {part_scores.get(3, 'N/A')}/9\n\n"
+            f"📋 <b>ОБЩАЯ ОЦЕНКА:</b>\n"
+            f"{feedback}\n\n"
+            f"⏱️ <b>Время симуляции:</b> "
+            f"{calculate_simulation_time(context)}\n\n"
+            f"{'='*50}\n\n"
+            f"{detailed_analysis}"
+        )
+        
+        # Save to database with complete feedback
+        db.complete_simulation(
+            session_id=session_id,
+            total_score=overall_score,
+            overall_band=overall_band,
+            complete_feedback=results_message
+        )
+        
+        # Show complete results with full analysis immediately
+        keyboard = [
+            [InlineKeyboardButton("🔄 Новая симуляция", callback_data="restart_full_sim")],
+            [InlineKeyboardButton("📈 Статистика", callback_data="speaking_stats")],
+            [InlineKeyboardButton("📋 Главное меню", callback_data="back_to_main_menu")]
+        ]
+        
+        # Handle both message and callback query contexts
+        if update.message:
+            await update.message.reply_text(
+                text=results_message,
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        elif update.callback_query:
+            await update.callback_query.edit_message_text(
+                text=results_message,
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            # Fallback: send new message to user
+            user_id = context.user_data.get('user_id')
+            if user_id:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=results_message,
+                    parse_mode='HTML',
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+        
+        # Clear simulation data
+        context.user_data.clear()
+        
+    except Exception as e:
+        logger.error(f"🔥 Error calculating final results: {e}")
+        
+        # Handle error message based on context
+        error_message = "❌ Произошла ошибка при расчете результатов. Обратитесь к администратору."
+        error_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📋 Главное меню", callback_data="back_to_main_menu")]
+        ])
+        
+        if update.message:
+            await update.message.reply_text(
+                error_message,
+                reply_markup=error_keyboard
+            )
+        elif update.callback_query:
+            await update.callback_query.edit_message_text(
+                error_message,
+                reply_markup=error_keyboard
+            )
+        else:
+            # Fallback: send error message to user
+            user_id = context.user_data.get('user_id')
+            if user_id:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=error_message,
+                    reply_markup=error_keyboard
+                )
+
+async def skip_full_sim_part(update: Update, context: CallbackContext) -> int:
+    """Skip a part in full simulation"""
+    query = update.callback_query
+    await query.answer()
+    
+    part_number = int(query.data.split('_')[-1])
+    next_state = part_number + 1
+    
+    if next_state > 3:
+        # Skip to final evaluation
+        await calculate_and_show_final_results(update, context)
+        return ConversationHandler.END
+    
+    # Generate next part question
+    next_part_prompt = generate_speaking_question(part=f"Part {next_state}")
+    context.user_data['current_speaking_prompt'] = next_part_prompt
+    context.user_data['current_part'] = next_state
+    
+    # Mark current part as skipped
+    context.user_data['part_scores'][part_number] = 0
+    
+    completion_msg = (
+        f"⏭️ <b>Часть {part_number} пропущена</b>\n\n"
+        f"🔄 <b>Переходим к части {next_state}</b>\n\n"
+        f"{next_part_prompt}\n\n"
+        f"🎤 <b>Запишите голосовой ответ</b>\n"
+        f"⏱️ <b>Рекомендуемое время:</b> "
+        f"{'1-2 минуты' if next_state == 2 else '30-90 секунд'}"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("⏭️ Пропустить часть", callback_data=f"skip_part_{next_state}")],
+        [InlineKeyboardButton("❌ Отменить симуляцию", callback_data="abandon_full_sim")]
+    ]
+    
+    await query.edit_message_text(
+        text=completion_msg,
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    
+    return next_state
+
+async def abandon_full_simulation(update: Update, context: CallbackContext) -> int:
+    """Abandon full simulation"""
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        # Mark simulation as abandoned in database
+        session_id = context.user_data.get('simulation_session_id')
+        if session_id:
+            db.abandon_simulation(session_id)
+        
+        # Clear context
+        context.user_data.clear()
+        
+        await query.edit_message_text(
+            "❌ <b>Симуляция отменена</b>\n\n"
+            "Вы можете начать новую симуляцию в любое время.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Новая симуляция", callback_data="full_speaking_sim")],
+                [InlineKeyboardButton("📋 Главное меню", callback_data="back_to_main_menu")]
+            ]),
+            parse_mode='HTML'
+        )
+        
+        return ConversationHandler.END
+        
+    except Exception as e:
+        logger.error(f"🔥 Error abandoning simulation: {e}")
+        await query.edit_message_text(
+            "❌ Произошла ошибка при отмене симуляции.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 Главное меню", callback_data="back_to_main_menu")]
+            ])
+        )
+        return ConversationHandler.END
+
+async def restart_full_simulation(update: Update, context: CallbackContext) -> int:
+    """Restart full simulation"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Clear previous simulation data
+    context.user_data.clear()
+    
+    # Start new simulation
+    return await start_full_speaking_simulation(update, context)
+
+
+
+async def cancel_full_simulation(update: Update, context: CallbackContext) -> int:
+    """Cancel full simulation via command"""
+    await update.message.reply_text(
+        "❌ <b>Симуляция отменена</b>\n\n"
+        "Вы можете начать новую симуляцию командой /speaking",
+        parse_mode='HTML'
+    )
+    
+    # Clear context
+    context.user_data.clear()
+    
+    return ConversationHandler.END
+
+
+
+async def handle_speaking_stats(update: Update, context: CallbackContext) -> None:
+    """Show user's speaking statistics"""
+    user = update.effective_user
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        # Get user's speaking statistics
+        stats = db.get_user_speaking_stats(user.id)
+        
+        stats_text = "📈 <b>Ваша статистика IELTS Speaking</b>\n\n"
+        stats_text += f"🎯 <b>Всего симуляций:</b> {stats['total_simulations']}\n"
+        stats_text += f"✅ <b>Завершено:</b> {stats['completed_simulations']}\n"
+        stats_text += f"🏆 <b>Лучший результат:</b> {stats['best_overall_score']}/9\n"
+        stats_text += f"📊 <b>Средний результат:</b> {stats['average_overall_score']:.1f}/9\n"
+        
+        if stats['last_simulation_date']:
+            last_date = stats['last_simulation_date'].split()[0] if isinstance(stats['last_simulation_date'], str) else str(stats['last_simulation_date']).split()[0]
+            stats_text += f"📅 <b>Последняя симуляция:</b> {last_date}\n"
+        
+        keyboard = [
+            [InlineKeyboardButton("🎯 Новая симуляция", callback_data="full_speaking_sim")],
+            [InlineKeyboardButton("🔙 Назад к профилю", callback_data="menu_profile")],
+            [InlineKeyboardButton("🔙 Назад к говорению", callback_data="menu_speaking")]
+        ]
+        
+        await query.edit_message_text(
+            text=stats_text,
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+    except Exception as e:
+        logger.error(f"🔥 Error showing speaking stats for user {user.id}: {e}")
+        await query.edit_message_text(
+            "❌ Произошла ошибка при загрузке статистики. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад", callback_data="menu_speaking")]
+            ])
+        )
+
 # --- Conversation Handlers Setup (for main.py) ---
 writing_conversation_handler = ConversationHandler(
     entry_points=[CommandHandler("writing", start_writing_task)],
@@ -1552,6 +2447,37 @@ vocabulary_conversation_handler = ConversationHandler(
     },
     fallbacks=[CommandHandler("cancel", cancel)],
     name="vocabulary_conversation",
+    persistent=False,
+    per_message=False
+)
+
+# Full speaking simulation conversation handler
+full_speaking_simulation_handler = ConversationHandler(
+    entry_points=[
+        CallbackQueryHandler(start_full_speaking_simulation, pattern=r'^full_speaking_sim$')
+    ],
+    states={
+        FULL_SIM_PART_1: [
+            MessageHandler(filters.VOICE, handle_full_sim_part_1),
+            CallbackQueryHandler(skip_full_sim_part, pattern=r'^skip_part_1$'),
+            CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$')
+        ],
+        FULL_SIM_PART_2: [
+            MessageHandler(filters.VOICE, handle_full_sim_part_2),
+            CallbackQueryHandler(skip_full_sim_part, pattern=r'^skip_part_2$'),
+            CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$')
+        ],
+        FULL_SIM_PART_3: [
+            MessageHandler(filters.VOICE, handle_full_sim_part_3),
+            CallbackQueryHandler(skip_full_sim_part, pattern=r'^skip_part_3$'),
+            CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$')
+        ]
+    },
+    fallbacks=[
+        CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$'),
+        CommandHandler("cancel", cancel_full_simulation)
+    ],
+    name="full_speaking_simulation",
     persistent=False,
     per_message=False
 )

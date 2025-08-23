@@ -36,6 +36,7 @@ class DatabaseManager:
                 
                 # Add missing columns if they don't exist (migration)
                 self._migrate_users_table(cursor)
+                self._migrate_speaking_simulations_table(cursor)
                 
                 # Create user_words table to store saved vocabulary
                 cursor.execute('''
@@ -52,6 +53,65 @@ class DatabaseManager:
                         UNIQUE(user_id, word)
                     )
                 ''')
+                
+                # Create speaking simulation sessions table
+                cursor.execute('''
+                            CREATE TABLE IF NOT EXISTS speaking_simulations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            session_id TEXT UNIQUE NOT NULL,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP,
+            total_score REAL,
+            overall_band REAL,
+            status TEXT DEFAULT 'in_progress' CHECK (status IN ('in_progress', 'completed', 'abandoned', 'paused')),
+            time_spent_seconds INTEGER DEFAULT 0,
+            complete_feedback TEXT,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+                ''')
+                
+                # Create individual part responses table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS speaking_part_responses (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        simulation_id INTEGER NOT NULL,
+                        part_number INTEGER NOT NULL CHECK (part_number IN (1, 2, 3)),
+                        question_prompt TEXT NOT NULL,
+                        user_transcription TEXT,
+                        individual_score REAL,
+                        fluency_score REAL,
+                        vocabulary_score REAL,
+                        grammar_score REAL,
+                        pronunciation_score REAL,
+                        evaluation_text TEXT,
+                        recording_duration_seconds INTEGER,
+                        recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (simulation_id) REFERENCES speaking_simulations (id),
+                        UNIQUE(simulation_id, part_number)
+                    )
+                ''')
+                
+                # Create user speaking statistics table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS user_speaking_stats (
+                        user_id INTEGER PRIMARY KEY,
+                        total_simulations INTEGER DEFAULT 0,
+                        completed_simulations INTEGER DEFAULT 0,
+                        average_overall_score REAL DEFAULT 0.0,
+                        best_overall_score REAL DEFAULT 0.0,
+                        total_practice_time_minutes INTEGER DEFAULT 0,
+                        last_simulation_date TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users (user_id)
+                    )
+                ''')
+                
+                # Create indexes for better performance
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_sessions ON speaking_simulations (user_id, started_at)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_session_status ON speaking_simulations (status)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_simulation_parts ON speaking_part_responses (simulation_id, part_number)')
                 
                 conn.commit()
                 logger.info("✅ Database initialized successfully")
@@ -94,6 +154,20 @@ class DatabaseManager:
                 
         except Exception as e:
             logger.error(f"🔥 Failed to migrate users table: {e}")
+    
+    def _migrate_speaking_simulations_table(self, cursor):
+        """Migrate existing speaking_simulations table to add new columns"""
+        try:
+            # Check if complete_feedback column exists
+            try:
+                cursor.execute("SELECT complete_feedback FROM speaking_simulations LIMIT 1")
+            except sqlite3.OperationalError:
+                # Column doesn't exist, add it
+                cursor.execute("ALTER TABLE speaking_simulations ADD COLUMN complete_feedback TEXT")
+                logger.info("✅ Added complete_feedback column to speaking_simulations table")
+                
+        except Exception as e:
+            logger.error(f"🔥 Failed to migrate speaking_simulations table: {e}")
     
     def add_user(self, user_id: int, username: str = None, first_name: str = None, last_name: str = None) -> bool:
         """Add or update user information"""
@@ -415,6 +489,189 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"🔥 Failed to search users with query '{query}': {e}")
             return []
+
+    def create_speaking_simulation(self, user_id: int) -> str:
+        """Create new speaking simulation session"""
+        try:
+            import time
+            session_id = f"sim_{user_id}_{int(time.time())}"
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO speaking_simulations (user_id, session_id, started_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                ''', (user_id, session_id))
+                conn.commit()
+                logger.info(f"✅ Created speaking simulation session {session_id} for user {user_id}")
+                return session_id
+        except Exception as e:
+            logger.error(f"🔥 Failed to create speaking simulation for user {user_id}: {e}")
+            return None
+
+    def save_part_response(self, simulation_id: str, part_number: int, 
+                          prompt: str, transcription: str, scores: dict, evaluation: str) -> bool:
+        """Save individual part response with detailed scores"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO speaking_part_responses 
+                    (simulation_id, part_number, question_prompt, user_transcription, 
+                     individual_score, fluency_score, vocabulary_score, grammar_score, 
+                     pronunciation_score, evaluation_text)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (simulation_id, part_number, prompt, transcription,
+                      scores.get('overall', 0), scores.get('fluency', 0),
+                      scores.get('vocabulary', 0), scores.get('grammar', 0),
+                      scores.get('pronunciation', 0), evaluation))
+                conn.commit()
+                logger.info(f"✅ Saved part {part_number} response for simulation {simulation_id}")
+                return True
+        except Exception as e:
+            logger.error(f"🔥 Failed to save part {part_number} response: {e}")
+            return False
+
+    def complete_simulation(self, session_id: str, total_score: float, overall_band: float, 
+                           complete_feedback: str = None) -> bool:
+        """Mark simulation as completed with final scores and save complete feedback"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE speaking_simulations 
+                    SET completed_at = CURRENT_TIMESTAMP, 
+                        total_score = ?, 
+                        overall_band = ?,
+                        status = 'completed',
+                        complete_feedback = ?
+                    WHERE session_id = ?
+                ''', (total_score, overall_band, complete_feedback, session_id))
+                
+                # Update user statistics
+                cursor.execute('''
+                    INSERT OR REPLACE INTO user_speaking_stats 
+                    (user_id, total_simulations, completed_simulations, 
+                     average_overall_score, best_overall_score, 
+                     last_simulation_date, updated_at)
+                    SELECT 
+                        s.user_id,
+                        COALESCE(stats.total_simulations, 0) + 1,
+                        COALESCE(stats.completed_simulations, 0) + 1,
+                        (COALESCE(stats.average_overall_score * stats.completed_simulations, 0) + ?) / 
+                        (COALESCE(stats.completed_simulations, 0) + 1),
+                        CASE 
+                            WHEN ? > COALESCE(stats.best_overall_score, 0) THEN ?
+                            ELSE COALESCE(stats.best_overall_score, 0)
+                        END,
+                        CURRENT_TIMESTAMP,
+                        CURRENT_TIMESTAMP
+                    FROM speaking_simulations s
+                    LEFT JOIN user_speaking_stats stats ON s.user_id = stats.user_id
+                    WHERE s.session_id = ?
+                ''', (overall_band, overall_band, overall_band, session_id))
+                
+                conn.commit()
+                logger.info(f"✅ Completed simulation {session_id} with score {overall_band}")
+                return True
+        except Exception as e:
+            logger.error(f"🔥 Failed to complete simulation {session_id}: {e}")
+            return False
+
+
+
+    def get_simulation_details(self, session_id: str) -> dict:
+        """Get detailed information about a specific simulation"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                # Get simulation info
+                cursor.execute('''
+                    SELECT user_id, started_at, completed_at, total_score, overall_band, status, complete_feedback
+                    FROM speaking_simulations WHERE session_id = ?
+                ''', (session_id,))
+                sim_data = cursor.fetchone()
+                
+                if not sim_data:
+                    return None
+                
+                # Get part responses
+                cursor.execute('''
+                    SELECT part_number, question_prompt, user_transcription, 
+                           individual_score, evaluation_text, recorded_at
+                    FROM speaking_part_responses 
+                    WHERE simulation_id = ? 
+                    ORDER BY part_number
+                ''', (session_id,))
+                parts_data = cursor.fetchall()
+                
+                return {
+                    'simulation': sim_data,
+                    'parts': parts_data
+                }
+        except Exception as e:
+            logger.error(f"🔥 Failed to get simulation details for {session_id}: {e}")
+            return None
+
+
+
+    def abandon_simulation(self, session_id: str) -> bool:
+        """Mark simulation as abandoned"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE speaking_simulations 
+                    SET status = 'abandoned', completed_at = CURRENT_TIMESTAMP
+                    WHERE session_id = ?
+                ''', (session_id,))
+                conn.commit()
+                logger.info(f"✅ Abandoned simulation {session_id}")
+                return True
+        except Exception as e:
+            logger.error(f"🔥 Failed to abandon simulation {session_id}: {e}")
+            return False
+
+    def get_user_speaking_stats(self, user_id: int) -> dict:
+        """Get user's speaking statistics"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT total_simulations, completed_simulations, average_overall_score,
+                           best_overall_score, total_practice_time_minutes, last_simulation_date
+                    FROM user_speaking_stats 
+                    WHERE user_id = ?
+                ''', (user_id,))
+                result = cursor.fetchone()
+                
+                if result:
+                    return {
+                        'total_simulations': result[0],
+                        'completed_simulations': result[1],
+                        'average_overall_score': result[2],
+                        'best_overall_score': result[3],
+                        'total_practice_time_minutes': result[4],
+                        'last_simulation_date': result[5]
+                    }
+                else:
+                    return {
+                        'total_simulations': 0,
+                        'completed_simulations': 0,
+                        'average_overall_score': 0.0,
+                        'best_overall_score': 0.0,
+                        'total_practice_time_minutes': 0,
+                        'last_simulation_date': None
+                    }
+        except Exception as e:
+            logger.error(f"🔥 Failed to get speaking stats for user {user_id}: {e}")
+            return {
+                'total_simulations': 0,
+                'completed_simulations': 0,
+                'average_overall_score': 0.0,
+                'best_overall_score': 0.0,
+                'total_practice_time_minutes': 0,
+                'last_simulation_date': None
+            }
 
 # Global database instance
 db = DatabaseManager()

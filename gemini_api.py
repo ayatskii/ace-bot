@@ -371,7 +371,7 @@ def generate_ielts_strategies(section: str, task_type: str = "general") -> str:
     specific_prompt = task_prompts.get(task_type, f"Создай общие стратегии для секции IELTS {section_name}")
     
     prompt = f"""
-    {specific_prompt}
+    {specific_prompt} 
 
 
     **Твой вывод должен строго следовать этому точному формату с четкими разделами и правильными интервалами:**
@@ -485,3 +485,90 @@ def evaluate_speaking_response(speaking_prompt: str, user_transcription: str, pa
                 **Keep response under 2000 characters total. Be concise but helpful. Respond in Russian. Use only HTML tags shown above.**
     """
     return generate_writing_text(prompt)
+
+def evaluate_speaking_response_for_simulation(speaking_prompt: str, 
+                                           user_transcription: str, 
+                                           part: str) -> str:
+    """Enhanced evaluation for simulation mode with structured scoring"""
+    prompt = f"""
+    Task: Evaluate an IELTS Speaking {part} response according to the official IELTS Speaking band descriptors.
+    
+    Speaking Prompt: {speaking_prompt}
+    Student's Response: {user_transcription}
+    
+    Instructions: Assess the response based on the four official IELTS Speaking criteria:
+    1. Fluency and Coherence (FC)
+    2. Lexical Resource (LR) 
+    3. Grammatical Range and Accuracy (GRA)
+    4. Pronunciation (P)
+    
+    **Your output must be CONCISE and follow this exact format:**
+
+    🎤 <b>IELTS SPEAKING - {part.upper()}</b>
+
+    🎯 <b>Балл:</b> [Score]/9
+
+    📝 <b>Краткая оценка:</b>
+    [Brief 1-2 sentence summary]
+
+    <b>📊 АНАЛИЗ ПО КРИТЕРИЯМ:</b>
+
+    🗣️ <b>Беглость (FC):</b> [Score] - [Brief 1 sentence evaluation]
+    📚 <b>Лексика (LR):</b> [Score] - [Brief 1 sentence evaluation]  
+    🔤 <b>Грамматика (GRA):</b> [Score] - [Brief 1 sentence evaluation]
+    🎵 <b>Произношение (P):</b> [Score] - [Brief 1 sentence evaluation]
+
+    <b>🎯 РЕКОМЕНДАЦИИ:</b>
+    ✅ <b>Сильные стороны:</b> [1-2 key strengths in one sentence]
+    🔧 <b>Улучшить:</b> [2-3 specific improvement areas with actionable advice in 1-2 sentences]
+    💡 <b>Совет:</b> [One concrete practice recommendation]
+
+    **Keep response under 2000 characters total. Be concise but helpful. Respond in Russian. Use only HTML tags shown above.**
+    """
+    return generate_writing_text(prompt)
+
+def extract_scores_from_evaluation(evaluation_text: str) -> dict:
+    """Extract numerical scores from evaluation text"""
+    import re
+    
+    scores = {
+        'overall': 0.0,
+        'fluency': 0.0,
+        'vocabulary': 0.0,
+        'grammar': 0.0,
+        'pronunciation': 0.0,
+        'summary': ''
+    }
+    
+    try:
+        # Extract overall score
+        overall_match = re.search(r'🎯 <b>Балл:</b> ([\d.]+)/9', evaluation_text)
+        if overall_match:
+            scores['overall'] = float(overall_match.group(1))
+        
+        # Extract individual criterion scores
+        fluency_match = re.search(r'🗣️ <b>Беглость \(FC\):</b> ([\d.]+)', evaluation_text)
+        if fluency_match:
+            scores['fluency'] = float(fluency_match.group(1))
+        
+        vocabulary_match = re.search(r'📚 <b>Лексика \(LR\):</b> ([\d.]+)', evaluation_text)
+        if vocabulary_match:
+            scores['vocabulary'] = float(vocabulary_match.group(1))
+        
+        grammar_match = re.search(r'🔤 <b>Грамматика \(GRA\):</b> ([\d.]+)', evaluation_text)
+        if grammar_match:
+            scores['grammar'] = float(grammar_match.group(1))
+        
+        pronunciation_match = re.search(r'🎵 <b>Произношение \(P\):</b> ([\d.]+)', evaluation_text)
+        if pronunciation_match:
+            scores['pronunciation'] = float(pronunciation_match.group(1))
+        
+        # Extract summary
+        summary_match = re.search(r'📝 <b>Краткая оценка:</b>\n([^<]+)', evaluation_text)
+        if summary_match:
+            scores['summary'] = summary_match.group(1).strip()
+        
+    except Exception as e:
+        logger.error(f"🔥 Error extracting scores from evaluation: {e}")
+    
+    return scores
