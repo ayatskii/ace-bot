@@ -65,6 +65,7 @@ def main():
     # --- Callback Query Handlers (for all inline buttons) ---
     # Handlers for initial menu selections
     application.add_handler(CallbackQueryHandler(bot_handlers.speaking_part_callback, pattern=r'^speaking_part_\d$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_voice_confirmation, pattern=r'^confirm_voice_\d$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.info_section_callback, pattern=r'^info_(listening|reading)_'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_start_buttons, pattern=r'^(menu_help|help_button)$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.menu_button_callback, pattern=r'^menu_(vocabulary|writing|speaking|info|grammar|profile)$|^back_to_main_menu$'))

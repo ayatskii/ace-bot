@@ -992,6 +992,7 @@ async def speaking_part_callback(update: Update, context: CallbackContext) -> No
     part_number_str = part_data.split('_')[-1]
     part_for_api = f"Part {part_number_str}"
     context.user_data['current_speaking_part'] = part_for_api
+    
     await query.edit_message_text(text=f"Отлично! 👍 Генерирую вопросы для {part_for_api}...")
     await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
     speaking_prompt = generate_speaking_question(part=part_for_api)
@@ -999,35 +1000,92 @@ async def speaking_part_callback(update: Update, context: CallbackContext) -> No
     # Store the speaking prompt for later evaluation
     context.user_data['current_speaking_prompt'] = speaking_prompt
     
-    # Add voice response instructions
-    voice_instructions = (
-        "\n\n🎤 <b>ГОЛОСОВОЙ ОТВЕТ:</b>\n"
-        "Запишите голосовое сообщение с вашим ответом на английском языке.\n"
-        "Бот автоматически транскрибирует речь и оценит ваш ответ по шкале IELTS (1-9)!\n\n"
-        "💡 <i>Говорите четко и уверенно, как на настоящем экзамене IELTS.</i>"
+    # Show question with confirmation options
+    confirmation_message = (
+        f"{speaking_prompt}\n\n"
+        f"🎤 <b>Готовы записать голосовой ответ?</b>\n\n"
+        f"Выберите один из вариантов:"
     )
     
-    full_response = speaking_prompt + voice_instructions
-    reply_markup = InlineKeyboardMarkup([
+    # Create confirmation buttons
+    keyboard = [
+        [InlineKeyboardButton("🎤 Записать голосовой ответ", callback_data=f"confirm_voice_{part_number_str}")],
+        [InlineKeyboardButton("⏭️ Пропустить вопрос", callback_data=f"speaking_part_{part_number_str}")],
         [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
-    ])
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Send message with HTML formatting for voice instructions
+    # Send confirmation message
     try:
-        await query.edit_message_text(text=full_response, parse_mode='HTML', reply_markup=reply_markup)
+        await query.edit_message_text(
+            text=confirmation_message, 
+            parse_mode='HTML', 
+            reply_markup=reply_markup
+        )
     except Exception as e:
-        # If edit fails, send new message
         logger.warning(f"Failed to edit message, sending new one: {e}")
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text=full_response,
+            text=confirmation_message,
             parse_mode='HTML',
             reply_markup=reply_markup
         )
     
-    # Set user state to expect voice message
+    # Set user state to expect confirmation (NOT voice message yet)
+    context.user_data['waiting_for_speaking_confirmation'] = True
+    logger.info(f"🎤 User {user.id} viewing speaking question for {part_for_api}, awaiting confirmation")
+
+@require_access
+async def handle_voice_confirmation(update: Update, context: CallbackContext) -> None:
+    """Handle voice recording confirmation"""
+    user = update.effective_user
+    query = update.callback_query
+    await query.answer()
+    
+    # Extract part number from callback data
+    part_number = query.data.split('_')[-1]
+    part_for_api = f"Part {part_number}"
+    
+    # Get stored speaking prompt
+    speaking_prompt = context.user_data.get('current_speaking_prompt', 'No prompt available')
+    
+    # Voice response instructions
+    voice_instructions = (
+        f"{speaking_prompt}\n\n"
+        f"🎤 <b>ГОЛОСОВОЙ ОТВЕТ АКТИВИРОВАН</b>\n\n"
+        f"✅ Теперь запишите голосовое сообщение с вашим ответом на английском языке.\n"
+        f"🔊 Бот автоматически транскрибирует речь и оценит ваш ответ по шкале IELTS (1-9)!\n\n"
+        f"💡 <i>Говорите четко и уверенно, как на настоящем экзамене IELTS.</i>\n\n"
+        f"⏱️ <b>Рекомендуемое время:</b>\n"
+        f"• Part 1: 30-60 секунд на вопрос\n"
+        f"• Part 2: 1-2 минуты\n"
+        f"• Part 3: 30-90 секунд на вопрос"
+    )
+    
+    reply_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Отменить запись", callback_data=f"speaking_part_{part_number}")],
+        [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
+    ])
+    
+    try:
+        await query.edit_message_text(
+            text=voice_instructions, 
+            parse_mode='HTML', 
+            reply_markup=reply_markup
+        )
+    except Exception as e:
+        logger.warning(f"Failed to edit message, sending new one: {e}")
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=voice_instructions,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+    
+    # NOW enable voice message recording
     context.user_data['waiting_for_voice_response'] = True
-    logger.info(f"🎤 User {user.id} ready to submit voice response for {part_for_api}")
+    context.user_data.pop('waiting_for_speaking_confirmation', None)
+    logger.info(f"🎤 User {user.id} confirmed voice recording for {part_for_api}")
 
 # --- IELTS INFO ---
 @require_access
