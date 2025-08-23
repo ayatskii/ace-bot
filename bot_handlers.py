@@ -11,7 +11,7 @@ from gemini_api import (
     get_random_word_details, generate_ielts_writing_task, evaluate_writing,
     generate_speaking_question, generate_ielts_strategies, explain_grammar_structure,
     get_topic_specific_words, evaluate_speaking_response, evaluate_speaking_response_for_simulation,
-    extract_scores_from_evaluation
+    extract_scores_from_evaluation, add_custom_word_to_dictionary
 )
 from audio_processor import audio_processor
 
@@ -122,6 +122,11 @@ GET_GRAMMAR_TOPIC = 3
 GET_VOCABULARY_TOPIC = 4
 GET_WRITING_CHECK_TASK = 5
 GET_WRITING_CHECK_ESSAY = 6
+GET_CUSTOM_WORD = 7
+GET_CUSTOM_WORD_DEFINITION = 8
+GET_CUSTOM_WORD_TRANSLATION = 9
+GET_CUSTOM_WORD_EXAMPLE = 10
+GET_CUSTOM_WORD_TOPIC = 11
 
 # --- Utility Functions ---
 def format_info_text(text: str) -> str:
@@ -739,6 +744,8 @@ async def help_command(update: Update, context: CallbackContext) -> None:
     help_text = ("Вот команды, которые вы можете использовать:\n\n"
                  "📋 /menu - Открыть интерактивное главное меню\n"
                  "🧠 /vocabulary - Получить словарные слова (случайные или по теме).\n"
+                 "➕ /customword - Добавить свое слово в словарь.\n"
+                 "🤖 /aicustomword - Добавить слово с AI-помощью.\n"
                  "✍️ /writing - Получить задание IELTS по письму.\n"
                  "🗣️ /speaking - Получить карточку IELTS для говорения.\n"
                  "ℹ️ /info - Получить советы и стратегии для конкретных типов заданий.\n"
@@ -793,6 +800,8 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
         keyboard = [
             [InlineKeyboardButton("🎲 Случайное слово", callback_data="vocabulary_random")],
             [InlineKeyboardButton("📚 Слова по теме", callback_data="vocabulary_topic")],
+            [InlineKeyboardButton("➕ Добавить свое слово", callback_data="custom_word_add")],
+            [InlineKeyboardButton("🤖 AI-помощь для слова", callback_data="ai_enhanced_custom_word")],
             [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -997,6 +1006,8 @@ async def handle_start_buttons(update: Update, context: CallbackContext) -> None
         help_text = ("Вот команды, которые вы можете использовать:\n\n"
                      "📋 /menu - Открыть интерактивное главное меню\n"
                      "🧠 /vocabulary - Получить словарные слова (случайные или по теме).\n"
+                     "➕ /customword - Добавить свое слово в словарь.\n"
+                     "🤖 /aicustomword - Добавить слово с AI-помощью.\n"
                      "✍️ /writing - Получить задание IELTS по письму.\n"
                      "🗣️ /speaking - Получить карточку IELTS для говорения.\n"
                      "ℹ️ /info - Получить советы и стратегии для конкретных типов заданий.\n"
@@ -1009,6 +1020,8 @@ async def start_vocabulary_selection(update: Update, context: CallbackContext, f
     keyboard = [
         [InlineKeyboardButton("🎲 Случайное слово", callback_data="vocabulary_random")],
         [InlineKeyboardButton("📚 Слова по теме", callback_data="vocabulary_topic")],
+        [InlineKeyboardButton("➕ Добавить свое слово", callback_data="custom_word_add")],
+        [InlineKeyboardButton("🤖 AI-помощь для слова", callback_data="ai_enhanced_custom_word")],
         [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1055,18 +1068,28 @@ async def handle_vocabulary_choice_callback(update: Update, context: CallbackCon
         reply_markup = InlineKeyboardMarkup(keyboard)
         await send_or_edit_safe_text(update, context, word_details, reply_markup)
         return ConversationHandler.END
-    else:  # topic
+    elif choice == "topic":
         logger.info(f"🎯 User {update.effective_user.id} chose topic-specific vocabulary")
         context.user_data['waiting_for_vocabulary_topic'] = True
         keyboard = [
             [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.answer()
         await query.edit_message_text(
             "📚 Пожалуйста, введите тему для словарных слов (например, 'окружающая среда', 'технологии', 'образование'):",
             reply_markup=reply_markup
         )
         return GET_VOCABULARY_TOPIC
+    elif choice == "custom":
+        logger.info(f"🎯 User {update.effective_user.id} chose custom word (conversation)")
+        await start_custom_word_input(update, context)
+        return GET_CUSTOM_WORD
+    else:  # ai_enhanced
+        logger.info(f"🎯 User {update.effective_user.id} chose AI-enhanced custom word (conversation)")
+        context.user_data['ai_enhanced_mode'] = True
+        await start_custom_word_input(update, context)
+        return GET_CUSTOM_WORD
 
 @require_access
 async def handle_vocabulary_choice_global(update: Update, context: CallbackContext) -> None:
@@ -1093,7 +1116,7 @@ async def handle_vocabulary_choice_global(update: Update, context: CallbackConte
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await send_or_edit_safe_text(update, context, word_details, reply_markup)
-    else:  # topic
+    elif choice == "topic":
         logger.info(f"🎯 User {update.effective_user.id} chose topic-specific vocabulary (global)")
         context.user_data['waiting_for_vocabulary_topic'] = True
         keyboard = [
@@ -1104,6 +1127,13 @@ async def handle_vocabulary_choice_global(update: Update, context: CallbackConte
             "📚 Пожалуйста, введите тему для словарных слов (например, 'окружающая среда', 'технологии', 'образование'):",
             reply_markup=reply_markup
         )
+    elif choice == "custom":
+        logger.info(f"🎯 User {update.effective_user.id} chose custom word (global)")
+        await start_custom_word_input(update, context)
+    else:  # ai_enhanced
+        logger.info(f"🎯 User {update.effective_user.id} chose AI-enhanced custom word (global)")
+        context.user_data['ai_enhanced_mode'] = True
+        await start_custom_word_input(update, context)
 
 @require_access
 async def get_topic_and_generate_vocabulary(update: Update, context: CallbackContext) -> int:
@@ -1145,6 +1175,393 @@ async def handle_vocabulary_topic_input(update: Update, context: CallbackContext
     await send_or_edit_safe_text(update, context, vocabulary_words, reply_markup)
     logger.info(f"✅ Topic-specific vocabulary generated for user {update.effective_user.id}")
     await menu_command(update, context, force_new_message=True)
+
+# --- CUSTOM WORD FUNCTIONS ---
+@require_access
+async def start_custom_word_input(update: Update, context: CallbackContext) -> int:
+    """Start the custom word input process"""
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.callback_query.edit_message_text(
+        "📝 <b>Добавление собственного слова</b>\n\n"
+        "Пожалуйста, введите слово на английском языке, которое вы хотите добавить в свой словарь:",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+    return GET_CUSTOM_WORD
+
+@require_access
+async def handle_custom_word_input(update: Update, context: CallbackContext) -> int:
+    """Handle the custom word input"""
+    word = update.message.text.strip()
+    
+    # Validate word input
+    if not word or len(word) < 2:
+        await update.message.reply_text(
+            "❌ Пожалуйста, введите корректное слово (минимум 2 символа).",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+            ])
+        )
+        return ConversationHandler.END
+    
+    # Check if word already exists
+    if db.word_exists_in_user_vocabulary(update.effective_user.id, word):
+        await update.message.reply_text(
+            f"⚠️ Слово '{word}' уже есть в вашем словаре!\n\n"
+            f"Хотите добавить другое слово или перейти к существующему?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📖 Мой словарь", callback_data="profile_vocabulary")],
+                [InlineKeyboardButton("➕ Добавить другое слово", callback_data="custom_word_add")],
+                [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+            ])
+        )
+        return ConversationHandler.END
+    
+    # Check if we're in AI-enhanced mode
+    if context.user_data.get('ai_enhanced_mode'):
+        # Use AI to generate word details
+        await update.message.reply_text("🤖 Генерирую определение, перевод и пример для вашего слова...")
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+        
+        # Generate AI-enhanced word details
+        ai_response = add_custom_word_to_dictionary(word)
+        
+        # Parse the AI response to extract details
+        import re
+        
+        definition_match = re.search(r'📖 <b>Определение:</b> (.+)', ai_response)
+        translation_match = re.search(r'🇷🇺 <b>Перевод:</b> (.+)', ai_response)
+        example_match = re.search(r'💡 <b>Пример:</b> (.+)', ai_response)
+        topic_match = re.search(r'🏷️ <b>Тема:</b> (.+)', ai_response)
+        
+        definition = definition_match.group(1).strip() if definition_match else "AI-generated definition"
+        translation = translation_match.group(1).strip() if translation_match else "AI-generated translation"
+        example = example_match.group(1).strip() if example_match else "AI-generated example"
+        topic = topic_match.group(1).strip() if topic_match else "AI-generated topic"
+        
+        # Save word to database
+        success = db.save_word_to_user_vocabulary(
+            user_id=update.effective_user.id,
+            word=word,
+            definition=definition,
+            translation=translation,
+            example=example,
+            topic=topic
+        )
+        
+        if success:
+            # Get updated vocabulary count
+            vocabulary_count = db.get_user_vocabulary_count(update.effective_user.id)
+            
+            # Create confirmation message
+            confirmation_text = f"""
+✅ <b>СЛОВО УСПЕШНО ДОБАВЛЕНО В СЛОВАРЬ (AI-улучшенное)</b>
+
+📝 <b>Слово:</b> {word}
+📖 <b>Определение:</b> {definition}
+🇷🇺 <b>Перевод:</b> {translation}
+💡 <b>Пример:</b> {example}
+🏷️ <b>Тема:</b> {topic}
+
+🎯 Слово сохранено в ваш личный словарь!
+📚 Всего слов в словаре: {vocabulary_count}
+            """.strip()
+            
+            keyboard = [
+                [InlineKeyboardButton("📖 Мой словарь", callback_data="profile_vocabulary")],
+                [InlineKeyboardButton("🤖 Добавить еще слово с AI", callback_data="ai_enhanced_custom_word")],
+                [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                confirmation_text,
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+            
+            # Clear the AI-enhanced mode flag
+            context.user_data.pop('ai_enhanced_mode', None)
+            
+            logger.info(f"✅ AI-enhanced word '{word}' saved to user {update.effective_user.id}'s vocabulary")
+        else:
+            await update.message.reply_text(
+                "❌ Произошла ошибка при сохранении слова. Попробуйте позже.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+                ])
+            )
+        
+        return ConversationHandler.END
+    
+    # Store the word and ask for definition (manual mode)
+    context.user_data['custom_word'] = word
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"📝 <b>Слово:</b> {word}\n\n"
+        "Теперь введите определение слова на английском языке:",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+    return GET_CUSTOM_WORD_DEFINITION
+
+@require_access
+async def handle_custom_word_definition(update: Update, context: CallbackContext) -> int:
+    """Handle the custom word definition input"""
+    definition = update.message.text.strip()
+    
+    if not definition or len(definition) < 5:
+        await update.message.reply_text(
+            "❌ Пожалуйста, введите корректное определение (минимум 5 символов).",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+            ])
+        )
+        return ConversationHandler.END
+    
+    # Store the definition and ask for translation
+    context.user_data['custom_word_definition'] = definition
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"📝 <b>Слово:</b> {context.user_data['custom_word']}\n"
+        f"📖 <b>Определение:</b> {definition}\n\n"
+        "Теперь введите перевод слова на русский язык:",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+    return GET_CUSTOM_WORD_TRANSLATION
+
+@require_access
+async def handle_custom_word_translation(update: Update, context: CallbackContext) -> int:
+    """Handle the custom word translation input"""
+    translation = update.message.text.strip()
+    
+    if not translation or len(translation) < 2:
+        await update.message.reply_text(
+            "❌ Пожалуйста, введите корректный перевод (минимум 2 символа).",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+            ])
+        )
+        return ConversationHandler.END
+    
+    # Store the translation and ask for example
+    context.user_data['custom_word_translation'] = translation
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"📝 <b>Слово:</b> {context.user_data['custom_word']}\n"
+        f"📖 <b>Определение:</b> {context.user_data['custom_word_definition']}\n"
+        f"🇷🇺 <b>Перевод:</b> {translation}\n\n"
+        "Теперь введите пример предложения с этим словом:",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+    return GET_CUSTOM_WORD_EXAMPLE
+
+@require_access
+async def handle_custom_word_example(update: Update, context: CallbackContext) -> int:
+    """Handle the custom word example input"""
+    example = update.message.text.strip()
+    
+    if not example or len(example) < 10:
+        await update.message.reply_text(
+            "❌ Пожалуйста, введите корректный пример (минимум 10 символов).",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+            ])
+        )
+        return ConversationHandler.END
+    
+    # Store the example and ask for topic
+    context.user_data['custom_word_example'] = example
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"📝 <b>Слово:</b> {context.user_data['custom_word']}\n"
+        f"📖 <b>Определение:</b> {context.user_data['custom_word_definition']}\n"
+        f"🇷🇺 <b>Перевод:</b> {context.user_data['custom_word_translation']}\n"
+        f"💡 <b>Пример:</b> {example}\n\n"
+        "Теперь введите тему для этого слова (например: 'окружающая среда', 'технологии', 'образование'):",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+    return GET_CUSTOM_WORD_TOPIC
+
+@require_access
+async def handle_custom_word_topic(update: Update, context: CallbackContext) -> int:
+    """Handle the custom word topic input and save the word"""
+    topic = update.message.text.strip()
+    
+    if not topic or len(topic) < 2:
+        await update.message.reply_text(
+            "❌ Пожалуйста, введите корректную тему (минимум 2 символа).",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+            ])
+        )
+        return ConversationHandler.END
+    
+    # Get all the stored data
+    word = context.user_data['custom_word']
+    definition = context.user_data['custom_word_definition']
+    translation = context.user_data['custom_word_translation']
+    example = context.user_data['custom_word_example']
+    
+    # Save word to database
+    success = db.save_word_to_user_vocabulary(
+        user_id=update.effective_user.id,
+        word=word,
+        definition=definition,
+        translation=translation,
+        example=example,
+        topic=topic
+    )
+    
+    if success:
+        # Get updated vocabulary count
+        vocabulary_count = db.get_user_vocabulary_count(update.effective_user.id)
+        
+        # Create confirmation message
+        confirmation_text = f"""
+✅ <b>СЛОВО УСПЕШНО ДОБАВЛЕНО В СЛОВАРЬ</b>
+
+📝 <b>Слово:</b> {word}
+📖 <b>Определение:</b> {definition}
+🇷🇺 <b>Перевод:</b> {translation}
+💡 <b>Пример:</b> {example}
+🏷️ <b>Тема:</b> {topic}
+
+🎯 Слово сохранено в ваш личный словарь!
+📚 Всего слов в словаре: {vocabulary_count}
+        """.strip()
+        
+        keyboard = [
+            [InlineKeyboardButton("📖 Мой словарь", callback_data="profile_vocabulary")],
+            [InlineKeyboardButton("➕ Добавить еще слово", callback_data="custom_word_add")],
+            [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            confirmation_text,
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+        
+        # Clear the stored data
+        context.user_data.pop('custom_word', None)
+        context.user_data.pop('custom_word_definition', None)
+        context.user_data.pop('custom_word_translation', None)
+        context.user_data.pop('custom_word_example', None)
+        
+        logger.info(f"✅ Custom word '{word}' saved to user {update.effective_user.id}'s vocabulary")
+    else:
+        await update.message.reply_text(
+            "❌ Произошла ошибка при сохранении слова. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+            ])
+        )
+    
+    return ConversationHandler.END
+
+@require_access
+async def handle_custom_word_add_callback(update: Update, context: CallbackContext) -> None:
+    """Handle the custom word add button callback"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Start the custom word input process
+    await start_custom_word_input(update, context)
+
+@require_access
+async def handle_custom_word_add_from_menu(update: Update, context: CallbackContext) -> None:
+    """Handle custom word add from the vocabulary menu"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Start the custom word input process
+    await start_custom_word_input(update, context)
+
+@require_access
+async def handle_ai_enhanced_custom_word(update: Update, context: CallbackContext) -> int:
+    """Handle AI-enhanced custom word where user provides just the word and AI fills details"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Ask user to provide just the word
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "🤖 <b>AI-улучшенное добавление слова</b>\n\n"
+        "Введите слово на английском языке, и я помогу создать полное определение с переводом, примером и темой:",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+    
+    # Set flag for AI-enhanced mode
+    context.user_data['ai_enhanced_mode'] = True
+    
+    return GET_CUSTOM_WORD
+
+@require_access
+async def custom_word_command(update: Update, context: CallbackContext) -> int:
+    """Command handler for /customword - starts custom word input process"""
+    user = update.effective_user
+    logger.info(f"🎯 User {user.id} started custom word command")
+    
+    # Start the custom word input process
+    return await start_custom_word_input(update, context)
+
+@require_access
+async def ai_custom_word_command(update: Update, context: CallbackContext) -> int:
+    """Command handler for /aicustomword - starts AI-enhanced custom word input process"""
+    user = update.effective_user
+    logger.info(f"🎯 User {user.id} started AI-enhanced custom word command")
+    
+    # Set AI-enhanced mode and start the process
+    context.user_data['ai_enhanced_mode'] = True
+    
+    # Ask user to provide just the word
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "🤖 <b>AI-улучшенное добавление слова</b>\n\n"
+        "Введите слово на английском языке, и я помогу создать полное определение с переводом, примером и темой:",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+    
+    return GET_CUSTOM_WORD
 
 # --- WRITING (Conversation) ---
 @require_access
@@ -2437,19 +2854,58 @@ grammar_conversation_handler = ConversationHandler(
 )
 
 vocabulary_conversation_handler = ConversationHandler(
-    entry_points=[CommandHandler("vocabulary", start_vocabulary_selection)],
+    entry_points=[
+        CommandHandler("vocabulary", start_vocabulary_selection),
+        CommandHandler("customword", custom_word_command),
+        CommandHandler("aicustomword", ai_custom_word_command),
+        CallbackQueryHandler(start_custom_word_input, pattern=r'^custom_word_add$'),
+        CallbackQueryHandler(handle_ai_enhanced_custom_word, pattern=r'^ai_enhanced_custom_word$')
+    ],
     states={
         GET_VOCABULARY_TOPIC: [
-            CallbackQueryHandler(handle_vocabulary_choice_callback, pattern=r'^vocabulary_(random|topic)$'),
+            CallbackQueryHandler(handle_vocabulary_choice_callback, pattern=r'^vocabulary_(random|topic|custom|ai_enhanced)$'),
             CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$'),
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_topic_and_generate_vocabulary)
         ],
+        GET_CUSTOM_WORD: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_word_input),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$')
+        ],
+        GET_CUSTOM_WORD_DEFINITION: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_word_definition),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$')
+        ],
+        GET_CUSTOM_WORD_TRANSLATION: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_word_translation),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$')
+        ],
+        GET_CUSTOM_WORD_EXAMPLE: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_word_example),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$')
+        ],
+        GET_CUSTOM_WORD_TOPIC: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_word_topic),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$')
+        ],
     },
-    fallbacks=[CommandHandler("cancel", cancel)],
+    fallbacks=[
+        CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
+        CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$'),
+        CommandHandler("cancel", cancel)
+    ],
     name="vocabulary_conversation",
     persistent=False,
     per_message=False
 )
+
+# Custom word conversation handler is now integrated into vocabulary_conversation_handler
+
+# AI-enhanced custom word conversation handler is now integrated into vocabulary_conversation_handler
 
 # Full speaking simulation conversation handler
 full_speaking_simulation_handler = ConversationHandler(
