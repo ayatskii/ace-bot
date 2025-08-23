@@ -36,6 +36,8 @@ class DatabaseManager:
                 
                 # Add missing columns if they don't exist (migration)
                 self._migrate_users_table(cursor)
+                self._migrate_speaking_simulations_table(cursor)
+                self._migrate_writing_evaluations_table(cursor)
                 
                 # Create user_words table to store saved vocabulary
                 cursor.execute('''
@@ -52,6 +54,102 @@ class DatabaseManager:
                         UNIQUE(user_id, word)
                     )
                 ''')
+                
+                # Create speaking simulation sessions table
+                cursor.execute('''
+                            CREATE TABLE IF NOT EXISTS speaking_simulations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            session_id TEXT UNIQUE NOT NULL,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP,
+            total_score REAL,
+            overall_band REAL,
+            status TEXT DEFAULT 'in_progress' CHECK (status IN ('in_progress', 'completed', 'abandoned', 'paused')),
+            time_spent_seconds INTEGER DEFAULT 0,
+            complete_feedback TEXT,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+                ''')
+                
+                # Create individual part responses table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS speaking_part_responses (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        simulation_id INTEGER NOT NULL,
+                        part_number INTEGER NOT NULL CHECK (part_number IN (1, 2, 3)),
+                        question_prompt TEXT NOT NULL,
+                        user_transcription TEXT,
+                        individual_score REAL,
+                        fluency_score REAL,
+                        vocabulary_score REAL,
+                        grammar_score REAL,
+                        pronunciation_score REAL,
+                        evaluation_text TEXT,
+                        recording_duration_seconds INTEGER,
+                        recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (simulation_id) REFERENCES speaking_simulations (id),
+                        UNIQUE(simulation_id, part_number)
+                    )
+                ''')
+                
+                # Create user speaking statistics table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS user_speaking_stats (
+                        user_id INTEGER PRIMARY KEY,
+                        total_simulations INTEGER DEFAULT 0,
+                        completed_simulations INTEGER DEFAULT 0,
+                        average_overall_score REAL DEFAULT 0.0,
+                        best_overall_score REAL DEFAULT 0.0,
+                        total_practice_time_minutes INTEGER DEFAULT 0,
+                        last_simulation_date TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users (user_id)
+                    )
+                ''')
+                
+                # Create writing evaluations table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS writing_evaluations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        task_description TEXT NOT NULL,
+                        essay_text TEXT NOT NULL,
+                        overall_score REAL NOT NULL,
+                        task_response_score REAL,
+                        coherence_cohesion_score REAL,
+                        lexical_resource_score REAL,
+                        grammatical_range_score REAL,
+                        evaluation_feedback TEXT NOT NULL,
+                        evaluated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users (user_id)
+                    )
+                ''')
+                
+                # Create user writing statistics table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS user_writing_stats (
+                        user_id INTEGER PRIMARY KEY,
+                        total_evaluations INTEGER DEFAULT 0,
+                        average_overall_score REAL DEFAULT 0.0,
+                        best_overall_score REAL DEFAULT 0.0,
+                        average_task_response_score REAL DEFAULT 0.0,
+                        average_coherence_cohesion_score REAL DEFAULT 0.0,
+                        average_lexical_resource_score REAL DEFAULT 0.0,
+                        average_grammatical_range_score REAL DEFAULT 0.0,
+                        last_evaluation_date TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users (user_id)
+                    )
+                ''')
+                
+                # Create indexes for better performance
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_sessions ON speaking_simulations (user_id, started_at)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_session_status ON speaking_simulations (status)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_simulation_parts ON speaking_part_responses (simulation_id, part_number)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_writing_evaluations ON writing_evaluations (user_id, evaluated_at)')
                 
                 conn.commit()
                 logger.info("✅ Database initialized successfully")
@@ -94,6 +192,75 @@ class DatabaseManager:
                 
         except Exception as e:
             logger.error(f"🔥 Failed to migrate users table: {e}")
+    
+    def _migrate_speaking_simulations_table(self, cursor):
+        """Migrate existing speaking_simulations table to add new columns"""
+        try:
+            # Check if complete_feedback column exists
+            try:
+                cursor.execute("SELECT complete_feedback FROM speaking_simulations LIMIT 1")
+            except sqlite3.OperationalError:
+                # Column doesn't exist, add it
+                cursor.execute("ALTER TABLE speaking_simulations ADD COLUMN complete_feedback TEXT")
+                logger.info("✅ Added complete_feedback column to speaking_simulations table")
+                
+        except Exception as e:
+            logger.error(f"🔥 Failed to migrate speaking_simulations table: {e}")
+    
+    def _migrate_writing_evaluations_table(self, cursor):
+        """Migrate existing writing_evaluations table to fix structure"""
+        try:
+            # Check if the table exists and has the correct structure
+            cursor.execute("PRAGMA table_info(writing_evaluations)")
+            columns = cursor.fetchall()
+            column_names = [col[1] for col in columns]
+            
+            logger.info(f"🔍 Writing evaluations table columns: {column_names}")
+            
+            # If table doesn't exist, it will be created with correct structure
+            if not columns:
+                logger.info("✅ Writing evaluations table doesn't exist, will be created")
+                return
+            
+            # Check if the table structure is correct
+            expected_columns = ['id', 'user_id', 'task_description', 'essay_text', 'overall_score', 
+                              'task_response_score', 'coherence_cohesion_score', 'lexical_resource_score', 
+                              'grammatical_range_score', 'evaluation_feedback', 'evaluated_at']
+            
+            if set(column_names) != set(expected_columns):
+                logger.warning(f"⚠️ Table structure mismatch. Expected: {expected_columns}, Got: {column_names}")
+                logger.info("🔄 Dropping and recreating writing_evaluations table with correct structure")
+                
+                # Drop the existing table
+                cursor.execute("DROP TABLE IF EXISTS writing_evaluations")
+                
+                # Recreate with correct structure
+                cursor.execute('''
+                    CREATE TABLE writing_evaluations (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        task_description TEXT NOT NULL,
+                        essay_text TEXT NOT NULL,
+                        overall_score REAL NOT NULL,
+                        task_response_score REAL,
+                        coherence_cohesion_score REAL,
+                        lexical_resource_score REAL,
+                        grammatical_range_score REAL,
+                        evaluation_feedback TEXT NOT NULL,
+                        evaluated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users (user_id)
+                    )
+                ''')
+                
+                # Recreate the index
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_writing_evaluations ON writing_evaluations (user_id, evaluated_at)')
+                
+                logger.info("✅ Writing evaluations table recreated with correct structure")
+            else:
+                logger.info("✅ Writing evaluations table structure is correct")
+                        
+        except Exception as e:
+            logger.error(f"🔥 Failed to migrate writing_evaluations table: {e}")
     
     def add_user(self, user_id: int, username: str = None, first_name: str = None, last_name: str = None) -> bool:
         """Add or update user information"""
@@ -415,6 +582,492 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"🔥 Failed to search users with query '{query}': {e}")
             return []
+
+    def create_speaking_simulation(self, user_id: int) -> str:
+        """Create new speaking simulation session"""
+        try:
+            import time
+            session_id = f"sim_{user_id}_{int(time.time())}"
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO speaking_simulations (user_id, session_id, started_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                ''', (user_id, session_id))
+                conn.commit()
+                logger.info(f"✅ Created speaking simulation session {session_id} for user {user_id}")
+                return session_id
+        except Exception as e:
+            logger.error(f"🔥 Failed to create speaking simulation for user {user_id}: {e}")
+            return None
+
+    def save_part_response(self, simulation_id: str, part_number: int, 
+                          prompt: str, transcription: str, scores: dict, evaluation: str) -> bool:
+        """Save individual part response with detailed scores"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO speaking_part_responses 
+                    (simulation_id, part_number, question_prompt, user_transcription, 
+                     individual_score, fluency_score, vocabulary_score, grammar_score, 
+                     pronunciation_score, evaluation_text)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (simulation_id, part_number, prompt, transcription,
+                      scores.get('overall', 0), scores.get('fluency', 0),
+                      scores.get('vocabulary', 0), scores.get('grammar', 0),
+                      scores.get('pronunciation', 0), evaluation))
+                conn.commit()
+                logger.info(f"✅ Saved part {part_number} response for simulation {simulation_id}")
+                return True
+        except Exception as e:
+            logger.error(f"🔥 Failed to save part {part_number} response: {e}")
+            return False
+
+    def complete_simulation(self, session_id: str, total_score: float, overall_band: float, 
+                           complete_feedback: str = None) -> bool:
+        """Mark simulation as completed with final scores and save complete feedback"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE speaking_simulations 
+                    SET completed_at = CURRENT_TIMESTAMP, 
+                        total_score = ?, 
+                        overall_band = ?,
+                        status = 'completed',
+                        complete_feedback = ?
+                    WHERE session_id = ?
+                ''', (total_score, overall_band, complete_feedback, session_id))
+                
+                # Update user statistics
+                # First get the user_id from the simulation
+                cursor.execute('SELECT user_id FROM speaking_simulations WHERE session_id = ?', (session_id,))
+                user_id_result = cursor.fetchone()
+                if not user_id_result:
+                    logger.error(f"🔥 Could not find simulation {session_id}")
+                    return False
+                
+                simulation_user_id = user_id_result[0]
+                
+                # Get current speaking stats
+                cursor.execute('SELECT * FROM user_speaking_stats WHERE user_id = ?', (simulation_user_id,))
+                current_stats = cursor.fetchone()
+                
+                if current_stats:
+                    # Update existing stats
+                    old_total = current_stats[1]  # total_simulations
+                    old_completed = current_stats[2]  # completed_simulations
+                    old_avg = current_stats[3]  # average_overall_score
+                    old_best = current_stats[4]  # best_overall_score
+                    
+                    new_total = old_total + 1
+                    new_completed = old_completed + 1
+                    new_avg = (old_avg * old_completed + overall_band) / new_completed
+                    new_best = max(old_best, overall_band)
+                    
+                    cursor.execute('''
+                        UPDATE user_speaking_stats 
+                        SET total_simulations = ?, completed_simulations = ?, 
+                            average_overall_score = ?, best_overall_score = ?,
+                            last_simulation_date = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                        WHERE user_id = ?
+                    ''', (new_total, new_completed, new_avg, new_best, simulation_user_id))
+                else:
+                    # Insert new stats record
+                    cursor.execute('''
+                        INSERT INTO user_speaking_stats 
+                        (user_id, total_simulations, completed_simulations, 
+                         average_overall_score, best_overall_score, 
+                         last_simulation_date, updated_at)
+                        VALUES (?, 1, 1, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ''', (simulation_user_id, overall_band, overall_band))
+                
+                conn.commit()
+                logger.info(f"✅ Completed simulation {session_id} with score {overall_band}")
+                return True
+        except Exception as e:
+            logger.error(f"🔥 Failed to complete simulation {session_id}: {e}")
+            return False
+
+
+
+    def get_simulation_details(self, session_id: str) -> dict:
+        """Get detailed information about a specific simulation"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                # Get simulation info
+                cursor.execute('''
+                    SELECT user_id, started_at, completed_at, total_score, overall_band, status, complete_feedback
+                    FROM speaking_simulations WHERE session_id = ?
+                ''', (session_id,))
+                sim_data = cursor.fetchone()
+                
+                if not sim_data:
+                    return None
+                
+                # Get part responses
+                cursor.execute('''
+                    SELECT part_number, question_prompt, user_transcription, 
+                           individual_score, evaluation_text, recorded_at
+                    FROM speaking_part_responses 
+                    WHERE simulation_id = ? 
+                    ORDER BY part_number
+                ''', (session_id,))
+                parts_data = cursor.fetchall()
+                
+                return {
+                    'simulation': sim_data,
+                    'parts': parts_data
+                }
+        except Exception as e:
+            logger.error(f"🔥 Failed to get simulation details for {session_id}: {e}")
+            return None
+
+
+
+    def abandon_simulation(self, session_id: str) -> bool:
+        """Mark simulation as abandoned"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    UPDATE speaking_simulations 
+                    SET status = 'abandoned', completed_at = CURRENT_TIMESTAMP
+                    WHERE session_id = ?
+                ''', (session_id,))
+                conn.commit()
+                logger.info(f"✅ Abandoned simulation {session_id}")
+                return True
+        except Exception as e:
+            logger.error(f"🔥 Failed to abandon simulation {session_id}: {e}")
+            return False
+
+    def get_user_speaking_stats(self, user_id: int) -> dict:
+        """Get user's speaking statistics"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT total_simulations, completed_simulations, average_overall_score,
+                           best_overall_score, total_practice_time_minutes, last_simulation_date
+                    FROM user_speaking_stats 
+                    WHERE user_id = ?
+                ''', (user_id,))
+                result = cursor.fetchone()
+                
+                # Check if stats exist but seem incorrect (0 simulations but simulations exist)
+                if not result or result[0] == 0:
+                    # Check if there are actually completed simulations for this user
+                    cursor.execute('SELECT COUNT(*) FROM speaking_simulations WHERE user_id = ? AND status = ?', (user_id, 'completed'))
+                    actual_count = cursor.fetchone()[0]
+                    
+                    if actual_count > 0:
+                        logger.info(f"🔧 Found {actual_count} completed simulations but 0 in stats for user {user_id}, recalculating...")
+                        # Recalculate stats
+                        if self.recalculate_speaking_stats(user_id):
+                            # Retry getting the stats
+                            cursor.execute('''
+                                SELECT total_simulations, completed_simulations, average_overall_score,
+                                       best_overall_score, total_practice_time_minutes, last_simulation_date
+                                FROM user_speaking_stats 
+                                WHERE user_id = ?
+                            ''', (user_id,))
+                            result = cursor.fetchone()
+                
+                if result:
+                    return {
+                        'total_simulations': result[0],
+                        'completed_simulations': result[1],
+                        'average_overall_score': result[2],
+                        'best_overall_score': result[3],
+                        'total_practice_time_minutes': result[4],
+                        'last_simulation_date': result[5]
+                    }
+                else:
+                    return {
+                        'total_simulations': 0,
+                        'completed_simulations': 0,
+                        'average_overall_score': 0.0,
+                        'best_overall_score': 0.0,
+                        'total_practice_time_minutes': 0,
+                        'last_simulation_date': None
+                    }
+        except Exception as e:
+            logger.error(f"🔥 Failed to get speaking stats for user {user_id}: {e}")
+            return {
+                'total_simulations': 0,
+                'completed_simulations': 0,
+                'average_overall_score': 0.0,
+                'best_overall_score': 0.0,
+                'total_practice_time_minutes': 0,
+                'last_simulation_date': None
+            }
+
+    def recalculate_speaking_stats(self, user_id: int) -> bool:
+        """Recalculate speaking statistics for a user based on their existing simulations"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Get all completed speaking simulations for the user
+                cursor.execute('''
+                    SELECT overall_band, completed_at
+                    FROM speaking_simulations 
+                    WHERE user_id = ? AND status = 'completed'
+                    ORDER BY completed_at ASC
+                ''', (user_id,))
+                simulations = cursor.fetchall()
+                
+                if not simulations:
+                    logger.info(f"ℹ️ No completed speaking simulations found for user {user_id}")
+                    return True
+                
+                # Calculate statistics
+                total_simulations = len(simulations)
+                completed_simulations = total_simulations
+                overall_scores = [sim[0] for sim in simulations]
+                last_simulation_date = simulations[-1][1]  # Most recent simulation date
+                
+                # Calculate averages
+                avg_overall = sum(overall_scores) / len(overall_scores)
+                best_overall = max(overall_scores)
+                
+                # Update or insert statistics
+                cursor.execute('''
+                    INSERT OR REPLACE INTO user_speaking_stats 
+                    (user_id, total_simulations, completed_simulations, 
+                     average_overall_score, best_overall_score, 
+                     last_simulation_date, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (user_id, total_simulations, completed_simulations, 
+                      avg_overall, best_overall, last_simulation_date))
+                
+                conn.commit()
+                logger.info(f"✅ Recalculated speaking stats for user {user_id}: {completed_simulations} simulations, avg score {avg_overall:.1f}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"🔥 Failed to recalculate speaking stats for user {user_id}: {e}")
+            return False
+
+    def save_writing_evaluation(self, user_id: int, task_description: str, essay_text: str,
+                               overall_score: float, task_response_score: float = None,
+                               coherence_cohesion_score: float = None, lexical_resource_score: float = None,
+                               grammatical_range_score: float = None, evaluation_feedback: str = "") -> bool:
+        """Save a writing evaluation to the database"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Execute the INSERT statement with exact column specification
+                cursor.execute('''
+                    INSERT INTO writing_evaluations 
+                    (user_id, task_description, essay_text, overall_score, task_response_score,
+                     coherence_cohesion_score, lexical_resource_score, grammatical_range_score, evaluation_feedback)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (user_id, task_description, essay_text, overall_score, task_response_score,
+                      coherence_cohesion_score, lexical_resource_score, grammatical_range_score, evaluation_feedback))
+                
+                # Update user writing statistics
+                # First get current stats
+                cursor.execute('SELECT * FROM user_writing_stats WHERE user_id = ?', (user_id,))
+                current_stats = cursor.fetchone()
+                
+                if current_stats:
+                    # Update existing stats
+                    old_total = current_stats[1]  # total_evaluations
+                    old_avg_overall = current_stats[2]  # average_overall_score
+                    old_best = current_stats[3]  # best_overall_score
+                    old_avg_tr = current_stats[4] if current_stats[4] else 0  # average_task_response_score
+                    old_avg_cc = current_stats[5] if current_stats[5] else 0  # average_coherence_cohesion_score
+                    old_avg_lr = current_stats[6] if current_stats[6] else 0  # average_lexical_resource_score
+                    old_avg_gra = current_stats[7] if current_stats[7] else 0  # average_grammatical_range_score
+                    
+                    new_total = old_total + 1
+                    new_avg_overall = (old_avg_overall * old_total + overall_score) / new_total
+                    new_best = max(old_best, overall_score)
+                    
+                    # Calculate new averages for individual scores (only if they exist)
+                    new_avg_tr = (old_avg_tr * old_total + (task_response_score or 0)) / new_total if task_response_score else old_avg_tr
+                    new_avg_cc = (old_avg_cc * old_total + (coherence_cohesion_score or 0)) / new_total if coherence_cohesion_score else old_avg_cc
+                    new_avg_lr = (old_avg_lr * old_total + (lexical_resource_score or 0)) / new_total if lexical_resource_score else old_avg_lr
+                    new_avg_gra = (old_avg_gra * old_total + (grammatical_range_score or 0)) / new_total if grammatical_range_score else old_avg_gra
+                    
+                    cursor.execute('''
+                        UPDATE user_writing_stats 
+                        SET total_evaluations = ?, average_overall_score = ?, best_overall_score = ?,
+                            average_task_response_score = ?, average_coherence_cohesion_score = ?,
+                            average_lexical_resource_score = ?, average_grammatical_range_score = ?,
+                            last_evaluation_date = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+                        WHERE user_id = ?
+                    ''', (new_total, new_avg_overall, new_best, new_avg_tr, new_avg_cc, new_avg_lr, new_avg_gra, user_id))
+                else:
+                    # Insert new stats record
+                    cursor.execute('''
+                        INSERT INTO user_writing_stats 
+                        (user_id, total_evaluations, average_overall_score, best_overall_score,
+                         average_task_response_score, average_coherence_cohesion_score,
+                         average_lexical_resource_score, average_grammatical_range_score,
+                         last_evaluation_date, updated_at)
+                        VALUES (?, 1, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                    ''', (user_id, overall_score, overall_score, 
+                          task_response_score or 0, coherence_cohesion_score or 0,
+                          lexical_resource_score or 0, grammatical_range_score or 0))
+                
+                conn.commit()
+                logger.info(f"✅ Writing evaluation saved for user {user_id} with score {overall_score}")
+                return True
+        except Exception as e:
+            logger.error(f"🔥 Failed to save writing evaluation for user {user_id}: {e}")
+            return False
+
+    def get_user_writing_stats(self, user_id: int) -> dict:
+        """Get user's writing statistics"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT total_evaluations, average_overall_score, best_overall_score,
+                           average_task_response_score, average_coherence_cohesion_score,
+                           average_lexical_resource_score, average_grammatical_range_score,
+                           last_evaluation_date
+                    FROM user_writing_stats 
+                    WHERE user_id = ?
+                ''', (user_id,))
+                result = cursor.fetchone()
+                
+                # Check if stats exist but seem incorrect (0 evaluations but evaluations exist)
+                if not result or result[0] == 0:
+                    # Check if there are actually evaluations for this user
+                    cursor.execute('SELECT COUNT(*) FROM writing_evaluations WHERE user_id = ?', (user_id,))
+                    actual_count = cursor.fetchone()[0]
+                    
+                    if actual_count > 0:
+                        logger.info(f"🔧 Found {actual_count} evaluations but 0 in stats for user {user_id}, recalculating...")
+                        # Recalculate stats
+                        if self.recalculate_writing_stats(user_id):
+                            # Retry getting the stats
+                            cursor.execute('''
+                                SELECT total_evaluations, average_overall_score, best_overall_score,
+                                       average_task_response_score, average_coherence_cohesion_score,
+                                       average_lexical_resource_score, average_grammatical_range_score,
+                                       last_evaluation_date
+                                FROM user_writing_stats 
+                                WHERE user_id = ?
+                            ''', (user_id,))
+                            result = cursor.fetchone()
+                
+                if result:
+                    return {
+                        'total_evaluations': result[0],
+                        'average_overall_score': result[1],
+                        'best_overall_score': result[2],
+                        'average_task_response_score': result[3],
+                        'average_coherence_cohesion_score': result[4],
+                        'average_lexical_resource_score': result[5],
+                        'average_grammatical_range_score': result[6],
+                        'last_evaluation_date': result[7]
+                    }
+                else:
+                    return {
+                        'total_evaluations': 0,
+                        'average_overall_score': 0.0,
+                        'best_overall_score': 0.0,
+                        'average_task_response_score': 0.0,
+                        'average_coherence_cohesion_score': 0.0,
+                        'average_lexical_resource_score': 0.0,
+                        'average_grammatical_range_score': 0.0,
+                        'last_evaluation_date': None
+                    }
+        except Exception as e:
+            logger.error(f"🔥 Failed to get writing stats for user {user_id}: {e}")
+            return {
+                'total_evaluations': 0,
+                'average_overall_score': 0.0,
+                'best_overall_score': 0.0,
+                'average_task_response_score': 0.0,
+                'average_coherence_cohesion_score': 0.0,
+                'average_lexical_resource_score': 0.0,
+                'average_grammatical_range_score': 0.0,
+                'last_evaluation_date': None
+            }
+
+    def get_recent_writing_evaluations(self, user_id: int, limit: int = 5) -> List[Tuple]:
+        """Get recent writing evaluations for a user"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT task_description, overall_score, evaluated_at
+                    FROM writing_evaluations 
+                    WHERE user_id = ? 
+                    ORDER BY evaluated_at DESC 
+                    LIMIT ?
+                ''', (user_id, limit))
+                evaluations = cursor.fetchall()
+                logger.info(f"✅ Retrieved {len(evaluations)} recent writing evaluations for user {user_id}")
+                return evaluations
+        except Exception as e:
+            logger.error(f"🔥 Failed to get recent writing evaluations for user {user_id}: {e}")
+            return []
+
+    def recalculate_writing_stats(self, user_id: int) -> bool:
+        """Recalculate writing statistics for a user based on their existing evaluations"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Get all writing evaluations for the user
+                cursor.execute('''
+                    SELECT overall_score, task_response_score, coherence_cohesion_score,
+                           lexical_resource_score, grammatical_range_score, evaluated_at
+                    FROM writing_evaluations 
+                    WHERE user_id = ? 
+                    ORDER BY evaluated_at ASC
+                ''', (user_id,))
+                evaluations = cursor.fetchall()
+                
+                if not evaluations:
+                    logger.info(f"ℹ️ No writing evaluations found for user {user_id}")
+                    return True
+                
+                # Calculate statistics
+                total_evaluations = len(evaluations)
+                overall_scores = [eval[0] for eval in evaluations]
+                task_response_scores = [eval[1] for eval in evaluations if eval[1] is not None]
+                coherence_scores = [eval[2] for eval in evaluations if eval[2] is not None]
+                lexical_scores = [eval[3] for eval in evaluations if eval[3] is not None]
+                grammar_scores = [eval[4] for eval in evaluations if eval[4] is not None]
+                last_evaluation_date = evaluations[-1][5]  # Most recent evaluation date
+                
+                # Calculate averages
+                avg_overall = sum(overall_scores) / len(overall_scores)
+                best_overall = max(overall_scores)
+                avg_task_response = sum(task_response_scores) / len(task_response_scores) if task_response_scores else 0.0
+                avg_coherence = sum(coherence_scores) / len(coherence_scores) if coherence_scores else 0.0
+                avg_lexical = sum(lexical_scores) / len(lexical_scores) if lexical_scores else 0.0
+                avg_grammar = sum(grammar_scores) / len(grammar_scores) if grammar_scores else 0.0
+                
+                # Update or insert statistics
+                cursor.execute('''
+                    INSERT OR REPLACE INTO user_writing_stats 
+                    (user_id, total_evaluations, average_overall_score, best_overall_score,
+                     average_task_response_score, average_coherence_cohesion_score,
+                     average_lexical_resource_score, average_grammatical_range_score,
+                     last_evaluation_date, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (user_id, total_evaluations, avg_overall, best_overall,
+                      avg_task_response, avg_coherence, avg_lexical, avg_grammar, last_evaluation_date))
+                
+                conn.commit()
+                logger.info(f"✅ Recalculated writing stats for user {user_id}: {total_evaluations} evaluations, avg score {avg_overall:.1f}")
+                return True
+                
+        except Exception as e:
+            logger.error(f"🔥 Failed to recalculate writing stats for user {user_id}: {e}")
+            return False
 
 # Global database instance
 db = DatabaseManager()

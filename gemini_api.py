@@ -371,7 +371,7 @@ def generate_ielts_strategies(section: str, task_type: str = "general") -> str:
     specific_prompt = task_prompts.get(task_type, f"Создай общие стратегии для секции IELTS {section_name}")
     
     prompt = f"""
-    {specific_prompt}
+    {specific_prompt} 
 
 
     **Твой вывод должен строго следовать этому точному формату с четкими разделами и правильными интервалами:**
@@ -485,3 +485,184 @@ def evaluate_speaking_response(speaking_prompt: str, user_transcription: str, pa
                 **Keep response under 2000 characters total. Be concise but helpful. Respond in Russian. Use only HTML tags shown above.**
     """
     return generate_writing_text(prompt)
+
+def evaluate_speaking_response_for_simulation(speaking_prompt: str, 
+                                           user_transcription: str, 
+                                           part: str) -> str:
+    """Enhanced evaluation for simulation mode with structured scoring"""
+    prompt = f"""
+    Task: Evaluate an IELTS Speaking {part} response according to the official IELTS Speaking band descriptors.
+    
+    Speaking Prompt: {speaking_prompt}
+    Student's Response: {user_transcription}
+    
+    Instructions: Assess the response based on the four official IELTS Speaking criteria:
+    1. Fluency and Coherence (FC)
+    2. Lexical Resource (LR) 
+    3. Grammatical Range and Accuracy (GRA)
+    4. Pronunciation (P)
+    
+    **Your output must be CONCISE and follow this exact format:**
+
+    🎤 <b>IELTS SPEAKING - {part.upper()}</b>
+
+    🎯 <b>Балл:</b> [Score]/9
+
+    📝 <b>Краткая оценка:</b>
+    [Brief 1-2 sentence summary]
+
+    <b>📊 АНАЛИЗ ПО КРИТЕРИЯМ:</b>
+
+    🗣️ <b>Беглость (FC):</b> [Score] - [Brief 1 sentence evaluation]
+    📚 <b>Лексика (LR):</b> [Score] - [Brief 1 sentence evaluation]  
+    🔤 <b>Грамматика (GRA):</b> [Score] - [Brief 1 sentence evaluation]
+    🎵 <b>Произношение (P):</b> [Score] - [Brief 1 sentence evaluation]
+
+python main.py
+    <b>🎯 РЕКОМЕНДАЦИИ:</b>
+    ✅ <b>Сильные стороны:</b> [1-2 key strengths in one sentence]
+    🔧 <b>Улучшить:</b> [2-3 specific improvement areas with actionable advice in 1-2 sentences]
+    💡 <b>Совет:</b> [One concrete practice recommendation]
+
+    **Keep response under 2000 characters total. Be concise but helpful. Respond in Russian. Use only HTML tags shown above.**
+    """
+    return generate_writing_text(prompt)
+
+def extract_scores_from_evaluation(evaluation_text: str) -> dict:
+    """Extract numerical scores from evaluation text"""
+    import re
+    
+    scores = {
+        'overall': 0.0,
+        'fluency': 0.0,
+        'vocabulary': 0.0,
+        'grammar': 0.0,
+        'pronunciation': 0.0,
+        'summary': ''
+    }
+    
+    try:
+        # Extract overall score
+        overall_match = re.search(r'🎯 <b>Балл:</b> ([\d.]+)/9', evaluation_text)
+        if overall_match:
+            scores['overall'] = float(overall_match.group(1))
+        
+        # Extract individual criterion scores
+        fluency_match = re.search(r'🗣️ <b>Беглость \(FC\):</b> ([\d.]+)', evaluation_text)
+        if fluency_match:
+            scores['fluency'] = float(fluency_match.group(1))
+        
+        vocabulary_match = re.search(r'📚 <b>Лексика \(LR\):</b> ([\d.]+)', evaluation_text)
+        if vocabulary_match:
+            scores['vocabulary'] = float(vocabulary_match.group(1))
+        
+        grammar_match = re.search(r'🔤 <b>Грамматика \(GRA\):</b> ([\d.]+)', evaluation_text)
+        if grammar_match:
+            scores['grammar'] = float(grammar_match.group(1))
+        
+        pronunciation_match = re.search(r'🎵 <b>Произношение \(P\):</b> ([\d.]+)', evaluation_text)
+        if pronunciation_match:
+            scores['pronunciation'] = float(pronunciation_match.group(1))
+        
+        # Extract summary
+        summary_match = re.search(r'📝 <b>Краткая оценка:</b>\n([^<]+)', evaluation_text)
+        if summary_match:
+            scores['summary'] = summary_match.group(1).strip()
+        
+    except Exception as e:
+        logger.error(f"🔥 Error extracting scores from evaluation: {e}")
+    
+    return scores
+
+def extract_writing_scores_from_evaluation(evaluation_text: str) -> dict:
+    """Extract numerical scores from writing evaluation text"""
+    import re
+    
+    scores = {
+        'overall': 0.0,
+        'task_response': 0.0,
+        'coherence_cohesion': 0.0,
+        'lexical_resource': 0.0,
+        'grammatical_range': 0.0,
+        'summary': ''
+    }
+    
+    try:
+        # Extract overall score
+        overall_match = re.search(r'🎯 Overall Band Score: ([\d.]+)', evaluation_text)
+        if overall_match:
+            scores['overall'] = float(overall_match.group(1))
+        
+        # Extract individual criterion scores
+        task_response_match = re.search(r'📌 Task Response \(TR\): Band ([\d.]+)', evaluation_text)
+        if task_response_match:
+            scores['task_response'] = float(task_response_match.group(1))
+        
+        coherence_match = re.search(r'📌 Coherence & Cohesion \(CC\): Band ([\d.]+)', evaluation_text)
+        if coherence_match:
+            scores['coherence_cohesion'] = float(coherence_match.group(1))
+        
+        lexical_match = re.search(r'📌 Lexical Resource \(LR\): Band ([\d.]+)', evaluation_text)
+        if lexical_match:
+            scores['lexical_resource'] = float(lexical_match.group(1))
+        
+        grammar_match = re.search(r'📌 Grammatical Range & Accuracy \(GRA\): Band ([\d.]+)', evaluation_text)
+        if grammar_match:
+            scores['grammatical_range'] = float(grammar_match.group(1))
+        
+        # Extract summary
+        summary_match = re.search(r'📝 Examiner\'s General Comments:\n([^<]+)', evaluation_text)
+        if summary_match:
+            scores['summary'] = summary_match.group(1).strip()
+        
+    except Exception as e:
+        logger.error(f"🔥 Error extracting writing scores from evaluation: {e}")
+    
+    return scores
+
+def add_custom_word_to_dictionary(word: str, definition: str = None, translation: str = None, 
+                                example: str = None, topic: str = None) -> str:
+    """Add a custom word to the user's dictionary with AI-enhanced details if needed"""
+    
+    # If user provided all details, just return a formatted confirmation
+    if definition and translation and example:
+        return f"""
+✅ <b>СЛОВО УСПЕШНО ДОБАВЛЕНО В СЛОВАРЬ</b>
+
+📝 <b>Слово:</b> {word}
+📖 <b>Определение:</b> {definition}
+🇷🇺 <b>Перевод:</b> {translation}
+💡 <b>Пример:</b> {example}
+🏷️ <b>Тема:</b> {topic if topic else 'Пользовательская'}
+
+🎯 Слово сохранено в ваш личный словарь!
+        """.strip()
+    
+    # If user provided incomplete information, use AI to enhance it
+    prompt = f"""
+    Пользователь хочет добавить слово "{word}" в свой словарь для изучения IELTS.
+    
+    Пользователь предоставил:
+    - Определение: {definition if definition else 'Не указано'}
+    - Перевод: {translation if translation else 'Не указан'}
+    - Пример: {example if example else 'Не указан'}
+    - Тема: {topic if topic else 'Не указана'}
+    
+    Пожалуйста, дополни недостающую информацию и улучши существующую, чтобы создать полное определение слова для изучения IELTS.
+    
+    **Твой вывод должен строго следовать этому точному формату:**
+
+    ✅ <b>СЛОВО УСПЕШНО ДОБАВЛЕНО В СЛОВАРЬ</b>
+
+    📝 <b>Слово:</b> {word}
+    📖 <b>Определение:</b> [четкое английское определение]
+    🇷🇺 <b>Перевод:</b> [русский перевод]
+    💡 <b>Пример:</b> [пример предложения]
+    🏷️ <b>Тема:</b> [тема для IELTS]
+
+    🎯 Слово сохранено в ваш личный словарь!
+    
+    **Не добавляй никакого другого текста или объяснений. Используй только указанный выше формат.**
+    """
+    
+    return generate_text(prompt)

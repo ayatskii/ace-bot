@@ -4,16 +4,23 @@ import logging
 import re
 import sqlite3
 import config
+from datetime import datetime
 from database import db
 
 from gemini_api import (
     get_random_word_details, generate_ielts_writing_task, evaluate_writing,
     generate_speaking_question, generate_ielts_strategies, explain_grammar_structure,
-    get_topic_specific_words, evaluate_speaking_response
+    get_topic_specific_words, evaluate_speaking_response, evaluate_speaking_response_for_simulation,
+    extract_scores_from_evaluation, extract_writing_scores_from_evaluation, add_custom_word_to_dictionary
 )
 from audio_processor import audio_processor
 
 logger = logging.getLogger(__name__)
+
+# Add these new conversation states for full speaking simulation
+FULL_SIM_PART_1 = 1
+FULL_SIM_PART_2 = 2
+FULL_SIM_PART_3 = 3
 
 # --- Admin Utility Functions ---
 def is_admin(user_id: int) -> bool:
@@ -115,6 +122,11 @@ GET_GRAMMAR_TOPIC = 3
 GET_VOCABULARY_TOPIC = 4
 GET_WRITING_CHECK_TASK = 5
 GET_WRITING_CHECK_ESSAY = 6
+GET_CUSTOM_WORD = 7
+GET_CUSTOM_WORD_DEFINITION = 8
+GET_CUSTOM_WORD_TRANSLATION = 9
+GET_CUSTOM_WORD_EXAMPLE = 10
+GET_CUSTOM_WORD_TOPIC = 11
 
 # --- Utility Functions ---
 def format_info_text(text: str) -> str:
@@ -169,6 +181,294 @@ def format_grammar_text(text: str) -> str:
     
     # Step 6: Fix spacing issues around bullet points and examples
     formatted_text = re.sub(r'\n\s*\*\s+', '\n• ', formatted_text)
+    
+    return formatted_text
+
+# Add these utility functions for scoring and simulation
+def calculate_weighted_overall_score(part_scores: dict) -> float:
+    """Calculate weighted overall score based on IELTS importance"""
+    PART_WEIGHTS = {
+        1: 0.25,  # Part 1: 25% of total score
+        2: 0.35,  # Part 2: 35% of total score (most important)
+        3: 0.40   # Part 3: 40% of total score
+    }
+    
+    total_score = 0
+    total_weight = 0
+    
+    for part, score in part_scores.items():
+        if score is not None and score > 0:
+            total_score += score * PART_WEIGHTS[part]
+            total_weight += PART_WEIGHTS[part]
+    
+    if total_weight == 0:
+        return 0.0
+    
+    return round(total_score / total_weight, 1)
+
+def determine_ielts_band(score: float) -> float:
+    """Convert numerical score to IELTS band score"""
+    if score >= 8.5:
+        return 9.0
+    elif score >= 7.5:
+        return 8.0
+    elif score >= 6.5:
+        return 7.0
+    elif score >= 5.5:
+        return 6.0
+    elif score >= 4.5:
+        return 5.0
+    elif score >= 3.5:
+        return 4.0
+    else:
+        return 3.5
+
+def generate_comprehensive_feedback(part_scores: dict, overall_band: float) -> str:
+    """Generate comprehensive feedback based on part scores"""
+    feedback_parts = []
+    
+    # Overall assessment
+    if overall_band >= 8.0:
+        feedback_parts.append("🎯 <b>Отличный результат!</b> Ваш уровень соответствует высоким требованиям IELTS.")
+    elif overall_band >= 6.5:
+        feedback_parts.append("✅ <b>Хороший результат!</b> Вы готовы к большинству университетских программ.")
+    elif overall_band >= 5.5:
+        feedback_parts.append("⚠️ <b>Удовлетворительный результат.</b> Рекомендуется дополнительная практика.")
+    else:
+        feedback_parts.append("📚 <b>Требуется улучшение.</b> Рекомендуется интенсивная подготовка.")
+    
+    # Part-specific feedback
+    for part, score in part_scores.items():
+        if score >= 7.0:
+            feedback_parts.append(f"• <b>Часть {part}:</b> Сильная сторона")
+        elif score >= 5.5:
+            feedback_parts.append(f"• <b>Часть {part}:</b> Стабильная работа")
+        else:
+            feedback_parts.append(f"• <b>Часть {part}:</b> Требует внимания")
+    
+    return "\n".join(feedback_parts)
+
+def calculate_simulation_time(context: CallbackContext) -> str:
+    """Calculate total simulation time"""
+    start_time = context.user_data.get('simulation_start_time', 0)
+    if start_time == 0:
+        return "Неизвестно"
+    
+    import time
+    elapsed = int(time.time() - start_time)
+    minutes = elapsed // 60
+    seconds = elapsed % 60
+    
+    if minutes > 0:
+        return f"{minutes} мин {seconds} сек"
+    else:
+        return f"{seconds} сек"
+
+def calculate_overall_criteria_scores(part_scores: dict, part_evaluations: dict) -> dict:
+    """Calculate overall scores for each IELTS criterion across all parts"""
+    criteria_scores = {
+        'fluency': [],
+        'vocabulary': [],
+        'grammar': [],
+        'pronunciation': []
+    }
+    
+    # Extract individual criterion scores from evaluations
+    for part_num, evaluation in part_evaluations.items():
+        if evaluation:
+            # Try to extract scores from evaluation text
+            scores = extract_scores_from_evaluation(evaluation)
+            if scores:
+                for criterion in criteria_scores.keys():
+                    if criterion in scores:
+                        criteria_scores[criterion].append(scores[criterion])
+    
+    # Calculate averages for each criterion
+    overall_criteria = {}
+    for criterion, scores in criteria_scores.items():
+        if scores:
+            overall_criteria[criterion] = round(sum(scores) / len(scores), 1)
+        else:
+            overall_criteria[criterion] = 0.0
+    
+    return overall_criteria
+
+def generate_detailed_analysis(part_scores: dict, part_transcriptions: dict, 
+                              part_evaluations: dict, overall_criteria: dict) -> str:
+    """Generate detailed analysis with official IELTS criteria"""
+    
+    analysis = "📊 <b>ДЕТАЛЬНЫЙ АНАЛИЗ ПО КРИТЕРИЯМ IELTS</b>\n\n"
+    
+    # Overall performance summary
+    total_score = sum(part_scores.values())
+    avg_score = total_score / len(part_scores) if part_scores else 0
+    
+    analysis += f"🏆 <b>ОБЩАЯ ПРОИЗВОДИТЕЛЬНОСТЬ</b>\n"
+    analysis += f"• Средний балл: {avg_score:.1f}/9\n"
+    analysis += f"• Общий балл: {total_score}/27\n\n"
+    
+    # Official IELTS criteria analysis
+    analysis += "📋 <b>ОФИЦИАЛЬНЫЕ КРИТЕРИИ IELTS SPEAKING</b>\n\n"
+    
+    # 1. Fluency and Coherence
+    fluency_score = overall_criteria.get('fluency', 0)
+    analysis += f"🎯 <b>1. Fluency and Coherence (Беглость и связность): {fluency_score}/9</b>\n"
+    analysis += get_fluency_feedback(fluency_score)
+    analysis += "\n"
+    
+    # 2. Lexical Resource
+    vocab_score = overall_criteria.get('vocabulary', 0)
+    analysis += f"📚 <b>2. Lexical Resource (Лексический запас): {vocab_score}/9</b>\n"
+    analysis += get_vocabulary_feedback(vocab_score)
+    analysis += "\n"
+    
+    # 3. Grammatical Range and Accuracy
+    grammar_score = overall_criteria.get('grammar', 0)
+    analysis += f"🔤 <b>3. Grammatical Range and Accuracy (Грамматика): {grammar_score}/9</b>\n"
+    analysis += get_grammar_feedback(grammar_score)
+    analysis += "\n"
+    
+    # 4. Pronunciation
+    pron_score = overall_criteria.get('pronunciation', 0)
+    analysis += f"🎤 <b>4. Pronunciation (Произношение): {pron_score}/9</b>\n"
+    analysis += get_pronunciation_feedback(pron_score)
+    analysis += "\n"
+    
+    # Part-by-part analysis
+    analysis += "📊 <b>АНАЛИЗ ПО ЧАСТЯМ</b>\n\n"
+    for part_num in sorted(part_scores.keys()):
+        score = part_scores[part_num]
+        transcription = part_transcriptions.get(part_num, "Недоступно")
+        evaluation = part_evaluations.get(part_num, "Недоступно")
+        
+        analysis += f"<b>Часть {part_num}:</b> {score}/9\n"
+        analysis += f"<i>Ответ: {transcription[:100]}{'...' if len(transcription) > 100 else ''}</i>\n"
+        analysis += f"<i>Оценка: {evaluation[:200]}{'...' if len(evaluation) > 200 else ''}</i>\n\n"
+    
+    return analysis
+
+def get_fluency_feedback(score: float) -> str:
+    """Get feedback for fluency and coherence"""
+    if score >= 8.0:
+        return "Отличная беглость речи, логичная структура ответов"
+    elif score >= 6.5:
+        return "Хорошая беглость, иногда есть паузы, но в целом связно"
+    elif score >= 5.5:
+        return "Удовлетворительная беглость, заметны паузы и повторения"
+    else:
+        return "Требуется работа над беглостью и связностью речи"
+
+def get_vocabulary_feedback(score: float) -> str:
+    """Get feedback for lexical resource"""
+    if score >= 8.0:
+        return "Богатый словарный запас, точное использование слов"
+    elif score >= 6.5:
+        return "Хороший словарный запас, иногда есть неточности"
+    elif score >= 5.5:
+        return "Достаточный словарный запас для базовой коммуникации"
+    else:
+        return "Требуется расширение словарного запаса"
+
+def get_grammar_feedback(score: float) -> str:
+    """Get feedback for grammatical range and accuracy"""
+    if score >= 8.0:
+        return "Отличное владение грамматикой, разнообразные конструкции"
+    elif score >= 6.5:
+        return "Хорошее владение грамматикой, редкие ошибки"
+    elif score >= 5.5:
+        return "Удовлетворительное владение грамматикой, есть ошибки"
+    else:
+        return "Требуется работа над грамматическими правилами"
+
+def get_pronunciation_feedback(score: float) -> str:
+    """Get feedback for pronunciation"""
+    if score >= 8.0:
+        return "Отличное произношение, четкая артикуляция"
+    elif score >= 6.5:
+        return "Хорошее произношение, понятно для слушателя"
+    elif score >= 5.5:
+        return "Удовлетворительное произношение, иногда неясно"
+    else:
+        return "Требуется работа над произношением и интонацией"
+
+
+
+    
+
+    
+    # General recommendations
+    if score < 6.5:
+        recommendations.append("• Увеличьте время практики speaking")
+        recommendations.append("• Работайте с преподавателем или репетитором")
+        recommendations.append("• Используйте приложения для изучения языка")
+    
+
+
+
+
+def determine_ielts_band(score: float) -> float:
+    """Convert numerical score to IELTS band score"""
+    if score >= 8.5:
+        return 9.0
+    elif score >= 8.0:
+        return 8.5
+    elif score >= 7.5:
+        return 8.0
+    elif score >= 7.0:
+        return 7.5
+    elif score >= 6.5:
+        return 7.0
+    elif score >= 6.0:
+        return 6.5
+    elif score >= 5.5:
+        return 6.0
+    elif score >= 5.0:
+        return 5.5
+    elif score >= 4.5:
+        return 5.0
+    else:
+        return 4.0
+
+def calculate_simulation_time(context: CallbackContext) -> str:
+    """Calculate and format simulation time"""
+    import time
+    start_time = context.user_data.get('simulation_start_time', time.time())
+    elapsed = int(time.time() - start_time)
+    minutes = elapsed // 60
+    seconds = elapsed % 60
+    return f"{minutes}м {seconds}с"
+
+def generate_comprehensive_feedback(part_scores: dict, overall_band: float) -> str:
+    """Generate comprehensive feedback based on scores"""
+    feedback = "🎯 <b>АНАЛИЗ РЕЗУЛЬТАТОВ:</b>\n\n"
+    
+    # Analyze strengths and weaknesses
+    strengths = []
+    weaknesses = []
+    
+    for part, score in part_scores.items():
+        if score >= 7.0:
+            strengths.append(f"Часть {part} ({score}/9)")
+        elif score < 6.0:
+            weaknesses.append(f"Часть {part} ({score}/9)")
+    
+    if strengths:
+        feedback += f"✅ <b>Сильные стороны:</b> {', '.join(strengths)}\n\n"
+    
+    if weaknesses:
+        feedback += f"🔧 <b>Требуют улучшения:</b> {', '.join(weaknesses)}\n\n"
+    
+    # Overall band interpretation
+    if overall_band >= 8.0:
+        feedback += "🏆 <b>Отличный результат!</b> Ваш уровень близок к носителю языка.\n"
+    elif overall_band >= 7.0:
+        feedback += "🎯 <b>Хороший результат!</b> Вы демонстрируете уверенное владение языком.\n"
+    elif overall_band >= 6.0:
+        feedback += "📈 <b>Удовлетворительный результат.</b> Есть потенциал для улучшения.\n"
+    else:
+        feedback += "📚 <b>Требуется дополнительная практика.</b> Рекомендуем больше тренироваться.\n"
+    
+    return feedback
     
     # Step 7: Ensure proper line breaks for readability
     formatted_text = re.sub(r'\n{3,}', '\n\n', formatted_text)
@@ -444,6 +744,8 @@ async def help_command(update: Update, context: CallbackContext) -> None:
     help_text = ("Вот команды, которые вы можете использовать:\n\n"
                  "📋 /menu - Открыть интерактивное главное меню\n"
                  "🧠 /vocabulary - Получить словарные слова (случайные или по теме).\n"
+                 "➕ /customword - Добавить свое слово в словарь.\n"
+                 "🤖 /aicustomword - Добавить слово с AI-помощью.\n"
                  "✍️ /writing - Получить задание IELTS по письму.\n"
                  "🗣️ /speaking - Получить карточку IELTS для говорения.\n"
                  "ℹ️ /info - Получить советы и стратегии для конкретных типов заданий.\n"
@@ -498,20 +800,16 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
         keyboard = [
             [InlineKeyboardButton("🎲 Случайное слово", callback_data="vocabulary_random")],
             [InlineKeyboardButton("📚 Слова по теме", callback_data="vocabulary_topic")],
+            [InlineKeyboardButton("➕ Добавить свое слово", callback_data="custom_word_add")],
+            [InlineKeyboardButton("🤖 AI-помощь для слова", callback_data="ai_enhanced_custom_word")],
             [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text("📖 Какой тип словаря вы хотите?", reply_markup=reply_markup)
         
     elif data == "menu_writing":
-        # Handle writing menu selection - direct approach to avoid conversation handler conflicts
-        keyboard = [
-            [InlineKeyboardButton("Задание 2 (Эссе)", callback_data="writing_task_type_2")],
-            [InlineKeyboardButton("📝 Проверить письмо", callback_data="writing_check")],
-            [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
+        # Handle writing menu selection - start writing conversation
+        await start_writing_task(update, context)
         
     elif data == "menu_grammar":
         # Handle grammar menu selection
@@ -529,13 +827,23 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
     elif data == "menu_speaking":
         # Handle speaking menu selection
         keyboard = [
+            [InlineKeyboardButton("🎯 Полная симуляция экзамена", callback_data="full_speaking_sim")],
             [InlineKeyboardButton("Part 1: Короткие вопросы", callback_data="speaking_part_1")],
             [InlineKeyboardButton("Part 2: Карточка-монолог", callback_data="speaking_part_2")],
             [InlineKeyboardButton("Part 3: Дискуссия", callback_data="speaking_part_3")],
+            [InlineKeyboardButton("📈 Статистика прогресса", callback_data="speaking_stats")],
             [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("🗣️ Выберите часть устного экзамена для практики:", reply_markup=reply_markup)
+        await query.edit_message_text(
+            "🗣️ <b>IELTS Speaking Practice</b>\n\n"
+            "Выберите режим практики:\n\n"
+            "🎯 <b>Полная симуляция</b> - пройдите все три части экзамена подряд\n"
+            "📋 <b>Отдельные части</b> - практикуйте конкретную часть\n"
+            "📊 <b>Аналитика</b> - отслеживайте свой прогресс",
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
         
     elif data == "menu_info":
         # Handle info menu selection
@@ -586,11 +894,50 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
                 profile_text += f"\n📚 Слов в словаре: 0"
                 logger.error(f"🔥 Failed to get vocabulary count: {e}")
             
-            # Skip registration date for now to avoid errors
+            # Add speaking statistics safely
+            try:
+                speaking_stats = db.get_user_speaking_stats(user.id)
+                profile_text += f"\n\n🗣️ <b>Статистика говорения:</b>"
+                profile_text += f"\n📊 Всего симуляций: {speaking_stats['total_simulations']}"
+                profile_text += f"\n✅ Завершено: {speaking_stats['completed_simulations']}"
+                if speaking_stats['average_overall_score'] > 0:
+                    profile_text += f"\n📈 Средний балл: {speaking_stats['average_overall_score']:.1f}/9.0"
+                if speaking_stats['best_overall_score'] > 0:
+                    profile_text += f"\n🏆 Лучший результат: {speaking_stats['best_overall_score']:.1f}/9.0"
+                if speaking_stats['total_practice_time_minutes'] > 0:
+                    profile_text += f"\n⏱️ Время практики: {speaking_stats['total_practice_time_minutes']} мин"
+                if speaking_stats['last_simulation_date']:
+                    profile_text += f"\n🕐 Последняя симуляция: {speaking_stats['last_simulation_date']}"
+                logger.info(f"✅ Speaking stats for user {user.id}: {speaking_stats}")
+            except Exception as e:
+                profile_text += f"\n\n🗣️ <b>Статистика говорения:</b>"
+                profile_text += f"\n📊 Всего симуляций: 0"
+                profile_text += f"\n✅ Завершено: 0"
+                logger.error(f"🔥 Failed to get speaking stats: {e}")
+            
+            # Add writing statistics safely
+            try:
+                writing_stats = db.get_user_writing_stats(user.id)
+                profile_text += f"\n\n✍️ <b>Статистика письма:</b>"
+                profile_text += f"\n📝 Всего проверок: {writing_stats['total_evaluations']}"
+                if writing_stats['average_overall_score'] > 0:
+                    profile_text += f"\n📈 Средний балл: {writing_stats['average_overall_score']:.1f}/9.0"
+                if writing_stats['best_overall_score'] > 0:
+                    profile_text += f"\n🏆 Лучший результат: {writing_stats['best_overall_score']:.1f}/9.0"
+                if writing_stats['last_evaluation_date']:
+                    profile_text += f"\n🕐 Последняя проверка: {writing_stats['last_evaluation_date']}"
+                logger.info(f"✅ Writing stats for user {user.id}: {writing_stats}")
+            except Exception as e:
+                profile_text += f"\n\n✍️ <b>Статистика письма:</b>"
+                profile_text += f"\n📝 Всего проверок: 0"
+                logger.error(f"🔥 Failed to get writing stats: {e}")
+            
             logger.info(f"📝 Profile text created: {len(profile_text)} chars")
             
             keyboard = [
                 [InlineKeyboardButton("📖 Мой словарь", callback_data="profile_vocabulary")],
+                [InlineKeyboardButton("📊 Статистика говорения", callback_data="speaking_stats")],
+                [InlineKeyboardButton("✍️ Статистика письма", callback_data="writing_stats")],
                 [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -671,6 +1018,8 @@ async def handle_start_buttons(update: Update, context: CallbackContext) -> None
         help_text = ("Вот команды, которые вы можете использовать:\n\n"
                      "📋 /menu - Открыть интерактивное главное меню\n"
                      "🧠 /vocabulary - Получить словарные слова (случайные или по теме).\n"
+                     "➕ /customword - Добавить свое слово в словарь.\n"
+                     "🤖 /aicustomword - Добавить слово с AI-помощью.\n"
                      "✍️ /writing - Получить задание IELTS по письму.\n"
                      "🗣️ /speaking - Получить карточку IELTS для говорения.\n"
                      "ℹ️ /info - Получить советы и стратегии для конкретных типов заданий.\n"
@@ -683,6 +1032,8 @@ async def start_vocabulary_selection(update: Update, context: CallbackContext, f
     keyboard = [
         [InlineKeyboardButton("🎲 Случайное слово", callback_data="vocabulary_random")],
         [InlineKeyboardButton("📚 Слова по теме", callback_data="vocabulary_topic")],
+        [InlineKeyboardButton("➕ Добавить свое слово", callback_data="custom_word_add")],
+        [InlineKeyboardButton("🤖 AI-помощь для слова", callback_data="ai_enhanced_custom_word")],
         [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -729,18 +1080,28 @@ async def handle_vocabulary_choice_callback(update: Update, context: CallbackCon
         reply_markup = InlineKeyboardMarkup(keyboard)
         await send_or_edit_safe_text(update, context, word_details, reply_markup)
         return ConversationHandler.END
-    else:  # topic
+    elif choice == "topic":
         logger.info(f"🎯 User {update.effective_user.id} chose topic-specific vocabulary")
         context.user_data['waiting_for_vocabulary_topic'] = True
         keyboard = [
             [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.answer()
         await query.edit_message_text(
             "📚 Пожалуйста, введите тему для словарных слов (например, 'окружающая среда', 'технологии', 'образование'):",
             reply_markup=reply_markup
         )
         return GET_VOCABULARY_TOPIC
+    elif choice == "custom":
+        logger.info(f"🎯 User {update.effective_user.id} chose custom word (conversation)")
+        await start_custom_word_input(update, context)
+        return GET_CUSTOM_WORD
+    else:  # ai_enhanced
+        logger.info(f"🎯 User {update.effective_user.id} chose AI-enhanced custom word (conversation)")
+        context.user_data['ai_enhanced_mode'] = True
+        await start_custom_word_input(update, context)
+        return GET_CUSTOM_WORD
 
 @require_access
 async def handle_vocabulary_choice_global(update: Update, context: CallbackContext) -> None:
@@ -767,7 +1128,7 @@ async def handle_vocabulary_choice_global(update: Update, context: CallbackConte
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await send_or_edit_safe_text(update, context, word_details, reply_markup)
-    else:  # topic
+    elif choice == "topic":
         logger.info(f"🎯 User {update.effective_user.id} chose topic-specific vocabulary (global)")
         context.user_data['waiting_for_vocabulary_topic'] = True
         keyboard = [
@@ -778,6 +1139,13 @@ async def handle_vocabulary_choice_global(update: Update, context: CallbackConte
             "📚 Пожалуйста, введите тему для словарных слов (например, 'окружающая среда', 'технологии', 'образование'):",
             reply_markup=reply_markup
         )
+    elif choice == "custom":
+        logger.info(f"🎯 User {update.effective_user.id} chose custom word (global)")
+        await start_custom_word_input(update, context)
+    else:  # ai_enhanced
+        logger.info(f"🎯 User {update.effective_user.id} chose AI-enhanced custom word (global)")
+        context.user_data['ai_enhanced_mode'] = True
+        await start_custom_word_input(update, context)
 
 @require_access
 async def get_topic_and_generate_vocabulary(update: Update, context: CallbackContext) -> int:
@@ -820,30 +1188,438 @@ async def handle_vocabulary_topic_input(update: Update, context: CallbackContext
     logger.info(f"✅ Topic-specific vocabulary generated for user {update.effective_user.id}")
     await menu_command(update, context, force_new_message=True)
 
-# --- WRITING (Conversation) ---
+# --- CUSTOM WORD FUNCTIONS ---
 @require_access
-async def start_writing_task(update: Update, context: CallbackContext, force_new_message=False) -> int:
+async def start_custom_word_input(update: Update, context: CallbackContext) -> int:
+    """Start the custom word input process"""
     keyboard = [
-        [InlineKeyboardButton("Задание 2 (Эссе)", callback_data="writing_task_type_2")],
-        [InlineKeyboardButton("📝 Проверить письмо", callback_data="writing_check")],
+        [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.callback_query.edit_message_text(
+        "📝 <b>Добавление собственного слова</b>\n\n"
+        "Пожалуйста, введите слово на английском языке, которое вы хотите добавить в свой словарь:",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+    return GET_CUSTOM_WORD
+
+@require_access
+async def handle_custom_word_input(update: Update, context: CallbackContext) -> int:
+    """Handle the custom word input"""
+    word = update.message.text.strip()
+    
+    # Validate word input
+    if not word or len(word) < 2:
+        await update.message.reply_text(
+            "❌ Пожалуйста, введите корректное слово (минимум 2 символа).",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+            ])
+        )
+        return ConversationHandler.END
+    
+    # Check if word already exists
+    if db.word_exists_in_user_vocabulary(update.effective_user.id, word):
+        await update.message.reply_text(
+            f"⚠️ Слово '{word}' уже есть в вашем словаре!\n\n"
+            f"Хотите добавить другое слово или перейти к существующему?",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📖 Мой словарь", callback_data="profile_vocabulary")],
+                [InlineKeyboardButton("➕ Добавить другое слово", callback_data="custom_word_add")],
+                [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+            ])
+        )
+        return ConversationHandler.END
+    
+    # Check if we're in AI-enhanced mode
+    if context.user_data.get('ai_enhanced_mode'):
+        # Use AI to generate word details
+        await update.message.reply_text("🤖 Генерирую определение, перевод и пример для вашего слова...")
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+        
+        # Generate AI-enhanced word details
+        ai_response = add_custom_word_to_dictionary(word)
+        
+        # Parse the AI response to extract details
+        import re
+        
+        definition_match = re.search(r'📖 <b>Определение:</b> (.+)', ai_response)
+        translation_match = re.search(r'🇷🇺 <b>Перевод:</b> (.+)', ai_response)
+        example_match = re.search(r'💡 <b>Пример:</b> (.+)', ai_response)
+        topic_match = re.search(r'🏷️ <b>Тема:</b> (.+)', ai_response)
+        
+        definition = definition_match.group(1).strip() if definition_match else "AI-generated definition"
+        translation = translation_match.group(1).strip() if translation_match else "AI-generated translation"
+        example = example_match.group(1).strip() if example_match else "AI-generated example"
+        topic = topic_match.group(1).strip() if topic_match else "AI-generated topic"
+        
+        # Save word to database
+        success = db.save_word_to_user_vocabulary(
+            user_id=update.effective_user.id,
+            word=word,
+            definition=definition,
+            translation=translation,
+            example=example,
+            topic=topic
+        )
+        
+        if success:
+            # Get updated vocabulary count
+            vocabulary_count = db.get_user_vocabulary_count(update.effective_user.id)
+            
+            # Create confirmation message
+            confirmation_text = f"""
+✅ <b>СЛОВО УСПЕШНО ДОБАВЛЕНО В СЛОВАРЬ (AI-улучшенное)</b>
+
+📝 <b>Слово:</b> {word}
+📖 <b>Определение:</b> {definition}
+🇷🇺 <b>Перевод:</b> {translation}
+💡 <b>Пример:</b> {example}
+🏷️ <b>Тема:</b> {topic}
+
+🎯 Слово сохранено в ваш личный словарь!
+📚 Всего слов в словаре: {vocabulary_count}
+            """.strip()
+            
+            keyboard = [
+                [InlineKeyboardButton("📖 Мой словарь", callback_data="profile_vocabulary")],
+                [InlineKeyboardButton("🤖 Добавить еще слово с AI", callback_data="ai_enhanced_custom_word")],
+                [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                confirmation_text,
+                reply_markup=reply_markup,
+                parse_mode='HTML'
+            )
+            
+            # Clear the AI-enhanced mode flag
+            context.user_data.pop('ai_enhanced_mode', None)
+            
+            logger.info(f"✅ AI-enhanced word '{word}' saved to user {update.effective_user.id}'s vocabulary")
+        else:
+            await update.message.reply_text(
+                "❌ Произошла ошибка при сохранении слова. Попробуйте позже.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+                ])
+            )
+        
+        return ConversationHandler.END
+    
+    # Store the word and ask for definition (manual mode)
+    context.user_data['custom_word'] = word
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"📝 <b>Слово:</b> {word}\n\n"
+        "Теперь введите определение слова на английском языке:",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+    return GET_CUSTOM_WORD_DEFINITION
+
+@require_access
+async def handle_custom_word_definition(update: Update, context: CallbackContext) -> int:
+    """Handle the custom word definition input"""
+    definition = update.message.text.strip()
+    
+    if not definition or len(definition) < 5:
+        await update.message.reply_text(
+            "❌ Пожалуйста, введите корректное определение (минимум 5 символов).",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+            ])
+        )
+        return ConversationHandler.END
+    
+    # Store the definition and ask for translation
+    context.user_data['custom_word_definition'] = definition
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"📝 <b>Слово:</b> {context.user_data['custom_word']}\n"
+        f"📖 <b>Определение:</b> {definition}\n\n"
+        "Теперь введите перевод слова на русский язык:",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+    return GET_CUSTOM_WORD_TRANSLATION
+
+@require_access
+async def handle_custom_word_translation(update: Update, context: CallbackContext) -> int:
+    """Handle the custom word translation input"""
+    translation = update.message.text.strip()
+    
+    if not translation or len(translation) < 2:
+        await update.message.reply_text(
+            "❌ Пожалуйста, введите корректный перевод (минимум 2 символа).",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+            ])
+        )
+        return ConversationHandler.END
+    
+    # Store the translation and ask for example
+    context.user_data['custom_word_translation'] = translation
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"📝 <b>Слово:</b> {context.user_data['custom_word']}\n"
+        f"📖 <b>Определение:</b> {context.user_data['custom_word_definition']}\n"
+        f"🇷🇺 <b>Перевод:</b> {translation}\n\n"
+        "Теперь введите пример предложения с этим словом:",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+    return GET_CUSTOM_WORD_EXAMPLE
+
+@require_access
+async def handle_custom_word_example(update: Update, context: CallbackContext) -> int:
+    """Handle the custom word example input"""
+    example = update.message.text.strip()
+    
+    if not example or len(example) < 10:
+        await update.message.reply_text(
+            "❌ Пожалуйста, введите корректный пример (минимум 10 символов).",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+            ])
+        )
+        return ConversationHandler.END
+    
+    # Store the example and ask for topic
+    context.user_data['custom_word_example'] = example
+    
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"📝 <b>Слово:</b> {context.user_data['custom_word']}\n"
+        f"📖 <b>Определение:</b> {context.user_data['custom_word_definition']}\n"
+        f"🇷🇺 <b>Перевод:</b> {context.user_data['custom_word_translation']}\n"
+        f"💡 <b>Пример:</b> {example}\n\n"
+        "Теперь введите тему для этого слова (например: 'окружающая среда', 'технологии', 'образование'):",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+    return GET_CUSTOM_WORD_TOPIC
+
+@require_access
+async def handle_custom_word_topic(update: Update, context: CallbackContext) -> int:
+    """Handle the custom word topic input and save the word"""
+    topic = update.message.text.strip()
+    
+    if not topic or len(topic) < 2:
+        await update.message.reply_text(
+            "❌ Пожалуйста, введите корректную тему (минимум 2 символа).",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+            ])
+        )
+        return ConversationHandler.END
+    
+    # Get all the stored data
+    word = context.user_data['custom_word']
+    definition = context.user_data['custom_word_definition']
+    translation = context.user_data['custom_word_translation']
+    example = context.user_data['custom_word_example']
+    
+    # Save word to database
+    success = db.save_word_to_user_vocabulary(
+        user_id=update.effective_user.id,
+        word=word,
+        definition=definition,
+        translation=translation,
+        example=example,
+        topic=topic
+    )
+    
+    if success:
+        # Get updated vocabulary count
+        vocabulary_count = db.get_user_vocabulary_count(update.effective_user.id)
+        
+        # Create confirmation message
+        confirmation_text = f"""
+✅ <b>СЛОВО УСПЕШНО ДОБАВЛЕНО В СЛОВАРЬ</b>
+
+📝 <b>Слово:</b> {word}
+📖 <b>Определение:</b> {definition}
+🇷🇺 <b>Перевод:</b> {translation}
+💡 <b>Пример:</b> {example}
+🏷️ <b>Тема:</b> {topic}
+
+🎯 Слово сохранено в ваш личный словарь!
+📚 Всего слов в словаре: {vocabulary_count}
+        """.strip()
+        
+        keyboard = [
+            [InlineKeyboardButton("📖 Мой словарь", callback_data="profile_vocabulary")],
+            [InlineKeyboardButton("➕ Добавить еще слово", callback_data="custom_word_add")],
+            [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            confirmation_text,
+            reply_markup=reply_markup,
+            parse_mode='HTML'
+        )
+        
+        # Clear the stored data
+        context.user_data.pop('custom_word', None)
+        context.user_data.pop('custom_word_definition', None)
+        context.user_data.pop('custom_word_translation', None)
+        context.user_data.pop('custom_word_example', None)
+        
+        logger.info(f"✅ Custom word '{word}' saved to user {update.effective_user.id}'s vocabulary")
+    else:
+        await update.message.reply_text(
+            "❌ Произошла ошибка при сохранении слова. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")]
+            ])
+        )
+    
+    return ConversationHandler.END
+
+@require_access
+async def handle_custom_word_add_callback(update: Update, context: CallbackContext) -> None:
+    """Handle the custom word add button callback"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Start the custom word input process
+    await start_custom_word_input(update, context)
+
+@require_access
+async def handle_custom_word_add_from_menu(update: Update, context: CallbackContext) -> None:
+    """Handle custom word add from the vocabulary menu"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Start the custom word input process
+    await start_custom_word_input(update, context)
+
+@require_access
+async def handle_ai_enhanced_custom_word(update: Update, context: CallbackContext) -> int:
+    """Handle AI-enhanced custom word where user provides just the word and AI fills details"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Ask user to provide just the word
+    keyboard = [
+        [InlineKeyboardButton("🔙 Назад к словарю", callback_data="menu_vocabulary")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        "🤖 <b>AI-улучшенное добавление слова</b>\n\n"
+        "Введите слово на английском языке, и я помогу создать полное определение с переводом, примером и темой:",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+    
+    # Set flag for AI-enhanced mode
+    context.user_data['ai_enhanced_mode'] = True
+    
+    return GET_CUSTOM_WORD
+
+@require_access
+async def custom_word_command(update: Update, context: CallbackContext) -> int:
+    """Command handler for /customword - starts custom word input process"""
+    user = update.effective_user
+    logger.info(f"🎯 User {user.id} started custom word command")
+    
+    # Start the custom word input process
+    return await start_custom_word_input(update, context)
+
+@require_access
+async def ai_custom_word_command(update: Update, context: CallbackContext) -> int:
+    """Command handler for /aicustomword - starts AI-enhanced custom word input process"""
+    user = update.effective_user
+    logger.info(f"🎯 User {user.id} started AI-enhanced custom word command")
+    
+    # Set AI-enhanced mode and start the process
+    context.user_data['ai_enhanced_mode'] = True
+    
+    # Ask user to provide just the word
+    keyboard = [
         [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "🤖 <b>AI-улучшенное добавление слова</b>\n\n"
+        "Введите слово на английском языке, и я помогу создать полное определение с переводом, примером и темой:",
+        reply_markup=reply_markup,
+        parse_mode='HTML'
+    )
+    
+    return GET_CUSTOM_WORD
+
+# --- WRITING (Conversation) ---
+@require_access
+async def start_writing_task(update: Update, context: CallbackContext, force_new_message=False) -> int:
+    # Get writing stats for quick preview
+    user = update.effective_user
+    try:
+        writing_stats = db.get_user_writing_stats(user.id)
+        if writing_stats['total_evaluations'] > 0:
+            stats_preview = f"\n\n📊 <b>Ваша статистика:</b>\n"
+            stats_preview += f"• Проверок: {writing_stats['total_evaluations']}\n"
+            stats_preview += f"• Средний балл: {writing_stats['average_overall_score']:.1f}/9.0\n"
+            stats_preview += f"• Лучший результат: {writing_stats['best_overall_score']:.1f}/9.0"
+        else:
+            stats_preview = "\n\n📊 <b>Ваша статистика:</b>\n• Пока нет данных"
+    except Exception as e:
+        stats_preview = "\n\n📊 <b>Ваша статистика:</b>\n• Не удалось загрузить"
+        logger.error(f"🔥 Failed to get writing stats preview: {e}")
+    
+    keyboard = [
+        [InlineKeyboardButton("Задание 2 (Эссе)", callback_data="writing_task_type_2")],
+        [InlineKeyboardButton("📝 Проверить письмо", callback_data="writing_check")],
+        [InlineKeyboardButton("📊 Статистика письма", callback_data="writing_stats")],
+        [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    message_text = f"✍️ <b>IELTS Writing Practice</b>{stats_preview}\n\nВыберите действие:"
+    
     if force_new_message:
         # Try to edit if possible, else send new message
         if hasattr(update, 'callback_query') and update.callback_query:
-            await update.callback_query.edit_message_text("✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
+            await update.callback_query.edit_message_text(message_text, reply_markup=reply_markup, parse_mode='HTML')
         elif hasattr(update, 'message') and update.message:
-            await update.message.reply_text("✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
+            await update.message.reply_text(message_text, reply_markup=reply_markup, parse_mode='HTML')
         else:
             chat_id = update.effective_chat.id if update.effective_chat else None
             if chat_id:
-                await context.bot.send_message(chat_id=chat_id, text="✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
+                await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode='HTML')
         return GET_WRITING_TOPIC
+    
     if hasattr(update, 'callback_query') and update.callback_query:
-        await update.callback_query.edit_message_text("✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
+        await update.callback_query.edit_message_text(message_text, reply_markup=reply_markup, parse_mode='HTML')
     elif hasattr(update, 'message') and update.message:
-        await update.message.reply_text("✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
+        await update.message.reply_text(message_text, reply_markup=reply_markup, parse_mode='HTML')
+    
     return GET_WRITING_TOPIC
 
 @require_access
@@ -869,8 +1645,8 @@ async def handle_writing_task_type_callback(update: Update, context: CallbackCon
     return GET_WRITING_TOPIC
 
 @require_access
-async def handle_writing_topic_input(update: Update, context: CallbackContext) -> None:
-    """Handle writing topic input from users, works globally"""
+async def handle_writing_topic_input(update: Update, context: CallbackContext) -> int:
+    """Handle writing topic input from users"""
     user_topic = update.message.text
     selected_task_type = context.user_data.get('selected_writing_task_type', 'Task 2')
     context.user_data['current_writing_topic'] = user_topic
@@ -886,44 +1662,101 @@ async def handle_writing_topic_input(update: Update, context: CallbackContext) -
     message_text = (f"Вот ваше {selected_task_type}:\n\n{writing_task}\n\n"
                     "Пожалуйста, напишите ваш ответ и отправьте его мне.")
     await send_or_edit_safe_text(update, context, message_text, reply_markup)
+    
+    # Debug logging for state transition
     logger.info(f"✅ Writing task generated for user {update.effective_user.id}")
-    await menu_command(update, context, force_new_message=True)
-
-@require_access
-async def get_topic_and_generate_writing(update: Update, context: CallbackContext) -> int:
-    user_topic = update.message.text
-    selected_task_type = context.user_data.get('selected_writing_task_type', 'Task 2')
-    context.user_data['current_writing_topic'] = user_topic
-    logger.info(f"🎯 Writing: User {update.effective_user.id} provided topic: '{user_topic}' for {selected_task_type}")
+    logger.info(f"🔍 Debug: Setting current_writing_task_description: '{writing_task[:100]}...'")
+    logger.info(f"🔍 Debug: User data keys: {list(context.user_data.keys())}")
+    logger.info(f"🔍 Debug: Moving to GET_WRITING_SUBMISSION state")
     
-    await update.message.reply_text(f"✅ Great! Generating a {selected_task_type} task on the topic: '{user_topic}'...")
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    
-    writing_task = generate_ielts_writing_task(task_type=selected_task_type, topic=user_topic)
-    context.user_data['current_writing_task_description'] = writing_task
-    
-    reply_markup = None
-    message_text = (f"Here is your {selected_task_type}:\n\n{writing_task}\n\n"
-                    "Please write your response and send it to me.")
-    await send_or_edit_safe_text(update, context, message_text, reply_markup)
-    logger.info(f"✅ Writing task generated for user {update.effective_user.id}, moving to submission state")
-    await menu_command(update, context, force_new_message=True)
     return GET_WRITING_SUBMISSION
+
+# This function has been replaced by handle_writing_topic_input
 
 @require_access
 async def handle_writing_submission(update: Update, context: CallbackContext) -> int:
     student_writing = update.message.text
     task_description = context.user_data.get('current_writing_task_description', 'No specific task given.')
     
-    await update.message.reply_text("Checking your writing, please wait...")
+    # Debug logging for submission handling
+    logger.info(f"✍️ Writing submission received for user {update.effective_user.id}")
+    logger.info(f"🔍 Debug: Essay length: {len(student_writing)} characters")
+    logger.info(f"🔍 Debug: Task description: '{task_description[:100]}...'")
+    logger.info(f"🔍 Debug: User data keys: {list(context.user_data.keys())}")
+    logger.info(f"🔍 Debug: Current conversation state: {context.user_data.get('_conversation_state', 'Unknown')}")
+    
+    await update.message.reply_text("📝 Проверяю ваше письмо, пожалуйста, подождите...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     feedback = evaluate_writing(writing_text=student_writing, task_description=task_description)
+    
+    # Extract scores from the feedback for statistics
+    scores = extract_writing_scores_from_evaluation(feedback)
+    
+    # Save the evaluation to database
+    if scores['overall'] > 0:
+        success = db.save_writing_evaluation(
+            user_id=update.effective_user.id,
+            task_description=task_description,
+            essay_text=student_writing,
+            overall_score=scores['overall'],
+            task_response_score=scores['task_response'],
+            coherence_cohesion_score=scores['coherence_cohesion'],
+            lexical_resource_score=scores['lexical_resource'],
+            grammatical_range_score=scores['grammatical_range'],
+            evaluation_feedback=feedback
+        )
+        if success:
+            logger.info(f"✅ Writing evaluation saved to database for user {update.effective_user.id}")
+        else:
+            logger.warning(f"⚠️ Failed to save writing evaluation to database for user {update.effective_user.id}")
+    
+    # Display the feedback
     await send_or_edit_safe_text(update, context, feedback)
     
-    context.user_data.clear()
-    await menu_command(update, context, force_new_message=True)
+    # Clear the writing task data
+    context.user_data.pop('current_writing_task_description', None)
+    context.user_data.pop('current_writing_topic', None)
+    context.user_data.pop('selected_writing_task_type', None)
+    
+    # Show completion message with options
+    completion_keyboard = [
+        [InlineKeyboardButton("📊 Посмотреть статистику", callback_data="writing_stats")],
+        [InlineKeyboardButton("✍️ Новое задание", callback_data="menu_writing")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main_menu")]
+    ]
+    completion_markup = InlineKeyboardMarkup(completion_keyboard)
+    
+    await update.message.reply_text(
+        "✅ <b>Проверка письма завершена!</b>\n\n"
+        "Ваше письмо было оценено и сохранено в статистике. "
+        "Вы можете посмотреть свой прогресс или начать новое задание.",
+        reply_markup=completion_markup,
+        parse_mode='HTML'
+    )
+    
+    logger.info(f"✅ Writing evaluation completed for user {update.effective_user.id}")
     return ConversationHandler.END
+
+@require_access
+async def handle_writing_submission_fallback(update: Update, context: CallbackContext) -> int:
+    """Fallback handler for writing submissions when conversation handler fails"""
+    logger.info(f"🔄 Writing submission fallback handler called for user {update.effective_user.id}")
+    
+    # Check if user has a writing task
+    if context.user_data.get('current_writing_task_description'):
+        logger.info(f"✅ Fallback: User has writing task, processing submission")
+        return await handle_writing_submission(update, context)
+    else:
+        logger.warning(f"⚠️ Fallback: User has no writing task, ending conversation")
+        await update.message.reply_text(
+            "❌ Не удалось определить задание для письма. Пожалуйста, начните заново.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✍️ Новое задание", callback_data="menu_writing")],
+                [InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main_menu")]
+            ])
+        )
+        return ConversationHandler.END
 
 @require_access
 async def handle_writing_check_callback(update: Update, context: CallbackContext) -> int:
@@ -960,12 +1793,25 @@ async def handle_speaking_command(update: Update, context: CallbackContext, forc
     if force_new_message:
         chat_id = update.effective_chat.id if update.effective_chat else update.callback_query.message.chat_id
         keyboard = [
+            [InlineKeyboardButton("🎯 Полная симуляция экзамена", callback_data="full_speaking_sim")],
             [InlineKeyboardButton("Part 1: Короткие вопросы", callback_data="speaking_part_1")],
             [InlineKeyboardButton("Part 2: Карточка-монолог", callback_data="speaking_part_2")],
             [InlineKeyboardButton("Part 3: Дискуссия", callback_data="speaking_part_3")],
+            [InlineKeyboardButton("📊 История симуляций", callback_data="speaking_history")],
+            [InlineKeyboardButton("📈 Статистика прогресса", callback_data="speaking_stats")],
+            [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        await context.bot.send_message(chat_id=chat_id, text="🗣️ Выберите часть устного экзамена для практики:", reply_markup=reply_markup)
+        await context.bot.send_message(
+            chat_id=chat_id, 
+            text="🗣️ <b>IELTS Speaking Practice</b>\n\n"
+                 "Выберите режим практики:\n\n"
+                 "🎯 <b>Полная симуляция</b> - пройдите все три части экзамена подряд\n"
+                 "📋 <b>Отдельные части</b> - практикуйте конкретную часть\n"
+                 "📊 <b>Аналитика</b> - отслеживайте свой прогресс",
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
         return
     if update.message:
         target = update.message
@@ -974,12 +1820,23 @@ async def handle_speaking_command(update: Update, context: CallbackContext, forc
     else:
         return
     keyboard = [
+        [InlineKeyboardButton("🎯 Полная симуляция экзамена", callback_data="full_speaking_sim")],
         [InlineKeyboardButton("Part 1: Короткие вопросы", callback_data="speaking_part_1")],
         [InlineKeyboardButton("Part 2: Карточка-монолог", callback_data="speaking_part_2")],
         [InlineKeyboardButton("Part 3: Дискуссия", callback_data="speaking_part_3")],
+        [InlineKeyboardButton("📈 Статистика прогресса", callback_data="speaking_stats")],
+        [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await target.reply_text("🗣️ Выберите часть устного экзамена для практики:", reply_markup=reply_markup)
+    await target.reply_text(
+        "🗣️ <b>IELTS Speaking Practice</b>\n\n"
+        "Выберите режим практики:\n\n"
+        "🎯 <b>Полная симуляция</b> - пройдите все три части экзамена подряд\n"
+        "📋 <b>Отдельные части</b> - практикуйте конкретную часть\n"
+        "📊 <b>Аналитика</b> - отслеживайте свой прогресс",
+        parse_mode='HTML',
+        reply_markup=reply_markup
+    )
 
 @require_access
 async def speaking_part_callback(update: Update, context: CallbackContext) -> None:
@@ -992,6 +1849,7 @@ async def speaking_part_callback(update: Update, context: CallbackContext) -> No
     part_number_str = part_data.split('_')[-1]
     part_for_api = f"Part {part_number_str}"
     context.user_data['current_speaking_part'] = part_for_api
+    
     await query.edit_message_text(text=f"Отлично! 👍 Генерирую вопросы для {part_for_api}...")
     await context.bot.send_chat_action(chat_id=query.message.chat_id, action="typing")
     speaking_prompt = generate_speaking_question(part=part_for_api)
@@ -999,35 +1857,92 @@ async def speaking_part_callback(update: Update, context: CallbackContext) -> No
     # Store the speaking prompt for later evaluation
     context.user_data['current_speaking_prompt'] = speaking_prompt
     
-    # Add voice response instructions
-    voice_instructions = (
-        "\n\n🎤 <b>ГОЛОСОВОЙ ОТВЕТ:</b>\n"
-        "Запишите голосовое сообщение с вашим ответом на английском языке.\n"
-        "Бот автоматически транскрибирует речь и оценит ваш ответ по шкале IELTS (1-9)!\n\n"
-        "💡 <i>Говорите четко и уверенно, как на настоящем экзамене IELTS.</i>"
+    # Show question with confirmation options
+    confirmation_message = (
+        f"{speaking_prompt}\n\n"
+        f"🎤 <b>Готовы записать голосовой ответ?</b>\n\n"
+        f"Выберите один из вариантов:"
     )
     
-    full_response = speaking_prompt + voice_instructions
-    reply_markup = InlineKeyboardMarkup([
+    # Create confirmation buttons
+    keyboard = [
+        [InlineKeyboardButton("🎤 Записать голосовой ответ", callback_data=f"confirm_voice_{part_number_str}")],
+        [InlineKeyboardButton("⏭️ Пропустить вопрос", callback_data=f"speaking_part_{part_number_str}")],
         [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
-    ])
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Send message with HTML formatting for voice instructions
+    # Send confirmation message
     try:
-        await query.edit_message_text(text=full_response, parse_mode='HTML', reply_markup=reply_markup)
+        await query.edit_message_text(
+            text=confirmation_message, 
+            parse_mode='HTML', 
+            reply_markup=reply_markup
+        )
     except Exception as e:
-        # If edit fails, send new message
         logger.warning(f"Failed to edit message, sending new one: {e}")
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text=full_response,
+            text=confirmation_message,
             parse_mode='HTML',
             reply_markup=reply_markup
         )
     
-    # Set user state to expect voice message
+    # Set user state to expect confirmation (NOT voice message yet)
+    context.user_data['waiting_for_speaking_confirmation'] = True
+    logger.info(f"🎤 User {user.id} viewing speaking question for {part_for_api}, awaiting confirmation")
+
+@require_access
+async def handle_voice_confirmation(update: Update, context: CallbackContext) -> None:
+    """Handle voice recording confirmation"""
+    user = update.effective_user
+    query = update.callback_query
+    await query.answer()
+    
+    # Extract part number from callback data
+    part_number = query.data.split('_')[-1]
+    part_for_api = f"Part {part_number}"
+    
+    # Get stored speaking prompt
+    speaking_prompt = context.user_data.get('current_speaking_prompt', 'No prompt available')
+    
+    # Voice response instructions
+    voice_instructions = (
+        f"{speaking_prompt}\n\n"
+        f"🎤 <b>ГОЛОСОВОЙ ОТВЕТ АКТИВИРОВАН</b>\n\n"
+        f"✅ Теперь запишите голосовое сообщение с вашим ответом на английском языке.\n"
+        f"🔊 Бот автоматически транскрибирует речь и оценит ваш ответ по шкале IELTS (1-9)!\n\n"
+        f"💡 <i>Говорите четко и уверенно, как на настоящем экзамене IELTS.</i>\n\n"
+        f"⏱️ <b>Рекомендуемое время:</b>\n"
+        f"• Part 1: 30-60 секунд на вопрос\n"
+        f"• Part 2: 1-2 минуты\n"
+        f"• Part 3: 30-90 секунд на вопрос"
+    )
+    
+    reply_markup = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Отменить запись", callback_data=f"speaking_part_{part_number}")],
+        [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
+    ])
+    
+    try:
+        await query.edit_message_text(
+            text=voice_instructions, 
+            parse_mode='HTML', 
+            reply_markup=reply_markup
+        )
+    except Exception as e:
+        logger.warning(f"Failed to edit message, sending new one: {e}")
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=voice_instructions,
+            parse_mode='HTML',
+            reply_markup=reply_markup
+        )
+    
+    # NOW enable voice message recording
     context.user_data['waiting_for_voice_response'] = True
-    logger.info(f"🎤 User {user.id} ready to submit voice response for {part_for_api}")
+    context.user_data.pop('waiting_for_speaking_confirmation', None)
+    logger.info(f"🎤 User {user.id} confirmed voice recording for {part_for_api}")
 
 # --- IELTS INFO ---
 @require_access
@@ -1217,22 +2132,59 @@ async def handle_writing_check_essay_input(update: Update, context: CallbackCont
     """Handle writing check essay input from users - second step of writing check"""
     essay_text = update.message.text
     task_description = context.user_data.get('current_writing_check_task', 'No task provided')
-    logger.info(f"🎯 Writing Check Essay: User {update.effective_user.id} submitted essay for evaluation")
+    user = update.effective_user
+    logger.info(f"🎯 Writing Check Essay: User {user.id} submitted essay for evaluation")
     
     await update.message.reply_text("📝 Проверяю ваше письмо, пожалуйста, подождите...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     feedback = evaluate_writing(writing_text=essay_text, task_description=task_description)
     
+    # Extract scores from the feedback
+    scores = extract_writing_scores_from_evaluation(feedback)
+    
+    # Save the evaluation to database
+    if scores['overall'] > 0:
+        success = db.save_writing_evaluation(
+            user_id=user.id,
+            task_description=task_description,
+            essay_text=essay_text,
+            overall_score=scores['overall'],
+            task_response_score=scores['task_response'],
+            coherence_cohesion_score=scores['coherence_cohesion'],
+            lexical_resource_score=scores['lexical_resource'],
+            grammatical_range_score=scores['grammatical_range'],
+            evaluation_feedback=feedback
+        )
+        if success:
+            logger.info(f"✅ Writing evaluation saved to database for user {user.id}")
+        else:
+            logger.warning(f"⚠️ Failed to save writing evaluation to database for user {user.id}")
+    
     # Use send_or_edit_safe_text to ensure proper markdown formatting with fallback
     reply_markup = None
     await send_or_edit_safe_text(update, context, feedback, reply_markup)
-    logger.info(f"✅ Writing evaluation completed for user {update.effective_user.id}")
+    logger.info(f"✅ Writing evaluation completed for user {user.id}")
     
     # Clear the writing check data
     context.user_data.pop('current_writing_check_task', None)
     
-    await menu_command(update, context, force_new_message=True)
+    # Show completion message with options
+    completion_keyboard = [
+        [InlineKeyboardButton("📊 Посмотреть статистику", callback_data="writing_stats")],
+        [InlineKeyboardButton("📝 Проверить еще одно письмо", callback_data="writing_check")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main_menu")]
+    ]
+    completion_markup = InlineKeyboardMarkup(completion_keyboard)
+    
+    await update.message.reply_text(
+        "✅ <b>Проверка письма завершена!</b>\n\n"
+        "Ваше письмо было оценено и сохранено в статистике. "
+        "Вы можете посмотреть свой прогресс или проверить другое письмо.",
+        reply_markup=completion_markup,
+        parse_mode='HTML'
+    )
+    
     return ConversationHandler.END
 
 @require_access
@@ -1278,12 +2230,54 @@ async def handle_global_text_input(update: Update, context: CallbackContext) -> 
         await handle_writing_check_essay_input(update, context)
         return
     
+    # Check if user is in writing submission mode (for conversation handler access)
+    if context.user_data.get('current_writing_task_description'):
+        logger.info(f"✍️ User {user.id} is in writing submission mode (global) - task: '{context.user_data['current_writing_task_description'][:50]}...'")
+        logger.info(f"🔍 Debug: Global handler processing writing submission")
+        logger.info(f"🔍 Debug: User data keys: {list(context.user_data.keys())}")
+        logger.info(f"🔍 Debug: Processing via global handler (conversation handler may have failed)")
+        await handle_writing_submission(update, context)
+        return
+    
+    # Additional check: if user has writing topic but no task description, they might be in the middle of generation
+    if context.user_data.get('current_writing_topic') and not context.user_data.get('current_writing_task_description'):
+        logger.info(f"🔄 User {user.id} has writing topic but no task yet - waiting for generation")
+        await update.message.reply_text(
+            "⏳ Пожалуйста, подождите, пока генерируется задание для письма...",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад к письму", callback_data="menu_writing")]
+            ])
+        )
+        return
+    
     # Check if admin is searching for users
     if context.user_data.get('waiting_for_admin_search'):
         logger.info(f"🔍 Admin {user.id} is searching for users")
         context.user_data.pop('waiting_for_admin_search', None)
         await handle_admin_search_input(update, context)
         return
+    
+    # If not in any specific mode, check if this might be a writing submission
+    # This is a safety net for when the conversation handler fails
+    if len(update.message.text) > 50:  # Likely an essay submission
+        logger.info(f"🔍 User {user.id} sent long text ({len(update.message.text)} chars) - checking if it's a writing submission")
+        
+        # Check if user has any writing-related data
+        if (context.user_data.get('current_writing_topic') or 
+            context.user_data.get('selected_writing_task_type') or
+            context.user_data.get('current_writing_task_description')):
+            
+            logger.info(f"✅ Long text detected with writing context - treating as writing submission")
+            if context.user_data.get('current_writing_task_description'):
+                await handle_writing_submission(update, context)
+            else:
+                await update.message.reply_text(
+                    "⏳ Задание для письма еще генерируется. Пожалуйста, подождите...",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Назад к письму", callback_data="menu_writing")]
+                    ])
+                )
+            return
     
     # If not in any specific mode, ignore the text
     # This prevents the global handler from interfering with conversation handlers
@@ -1294,6 +2288,23 @@ async def handle_global_text_input(update: Update, context: CallbackContext) -> 
 async def cancel(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Operation cancelled.")
     return ConversationHandler.END
+
+async def debug_conversation_state(update: Update, context: CallbackContext) -> None:
+    """Debug function to check current conversation state"""
+    user = update.effective_user
+    logger.info(f"🔍 Debug: User {user.id} conversation state check")
+    logger.info(f"🔍 Debug: User data keys: {list(context.user_data.keys())}")
+    logger.info(f"🔍 Debug: Current writing topic: {context.user_data.get('current_writing_topic', 'None')}")
+    logger.info(f"🔍 Debug: Current writing task: {context.user_data.get('current_writing_task_description', 'None')[:100] if context.user_data.get('current_writing_task_description') else 'None'}")
+    
+    await update.message.reply_text(
+        f"🔍 <b>Debug Info:</b>\n\n"
+        f"User ID: {user.id}\n"
+        f"Writing Topic: {context.user_data.get('current_writing_topic', 'None')}\n"
+        f"Writing Task: {context.user_data.get('current_writing_task_description', 'None')[:100] if context.user_data.get('current_writing_task_description') else 'None'}...\n"
+        f"User Data Keys: {', '.join(context.user_data.keys())}",
+        parse_mode='HTML'
+    )
 
 async def error_handler(update: object, context: CallbackContext) -> None:
     logger.error(f"Update '{update}' caused error '{context.error}'")
@@ -1445,6 +2456,608 @@ async def handle_voice_message(update: Update, context: CallbackContext) -> None
                 ])
             )
 
+# --- Full Speaking Simulation Functions ---
+async def start_full_speaking_simulation(update: Update, context: CallbackContext) -> int:
+    """Start a full speaking simulation session"""
+    user = update.effective_user
+    
+    if not check_user_access(user.id):
+        return ConversationHandler.END
+    
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        # Create database session
+        session_id = db.create_speaking_simulation(user.id)
+        if not session_id:
+            await query.edit_message_text(
+                "❌ Не удалось создать сессию симуляции. Попробуйте позже.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔙 Назад", callback_data="menu_speaking")]
+                ])
+            )
+            return ConversationHandler.END
+        
+        # Initialize simulation context
+        import time
+        context.user_data.update({
+            'full_simulation_mode': True,
+            'simulation_session_id': session_id,
+            'simulation_start_time': time.time(),
+            'current_part': 1,
+            'part_scores': {},
+            'part_transcriptions': {},
+            'part_evaluations': {},
+            'user_id': user.id
+        })
+        
+        # Generate Part 1 question
+        speaking_prompt = generate_speaking_question(part="Part 1")
+        context.user_data['current_speaking_prompt'] = speaking_prompt
+        
+        # Show Part 1 instructions
+        instructions = (
+            f"🎯 <b>ПОЛНАЯ СИМУЛЯЦИЯ IELTS SPEAKING</b>\n\n"
+            f"📋 <b>Часть 1 из 3: Короткие вопросы</b>\n\n"
+            f"{speaking_prompt}\n\n"
+            f"🎤 <b>Запишите голосовой ответ</b>\n"
+            f"⏱️ <b>Рекомендуемое время:</b> 30-60 секунд\n\n"
+            f"<i>💡 <b>Важно:</b> Оценки по частям не показываются до завершения всей симуляции.\n"
+            f"В конце вы получите детальный анализ по всем критериям IELTS.</i>"
+        )
+        
+        keyboard = [
+            [InlineKeyboardButton("⏭️ Пропустить часть", callback_data="skip_part_1")],
+            [InlineKeyboardButton("❌ Отменить симуляцию", callback_data="abandon_full_sim")]
+        ]
+        
+        await query.edit_message_text(
+            text=instructions,
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+        logger.info(f"🎯 User {user.id} started full speaking simulation {session_id}")
+        return FULL_SIM_PART_1
+        
+    except Exception as e:
+        logger.error(f"🔥 Error starting full simulation for user {user.id}: {e}")
+        await query.edit_message_text(
+            "❌ Произошла ошибка при запуске симуляции. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад", callback_data="menu_speaking")]
+            ])
+        )
+        return ConversationHandler.END
+
+async def handle_full_sim_part_1(update: Update, context: CallbackContext) -> int:
+    """Handle Part 1 response and move to Part 2"""
+    return await handle_full_sim_part_response(update, context, 1, FULL_SIM_PART_2)
+
+async def handle_full_sim_part_2(update: Update, context: CallbackContext) -> int:
+    """Handle Part 2 response and move to Part 3"""
+    return await handle_full_sim_part_response(update, context, 2, FULL_SIM_PART_3)
+
+async def handle_full_sim_part_3(update: Update, context: CallbackContext) -> int:
+    """Handle Part 3 response and complete simulation"""
+    return await handle_full_sim_part_response(update, context, 3, None)
+
+async def handle_full_sim_part_response(update: Update, context: CallbackContext, 
+                                      part_number: int, next_state: int) -> int:
+    """Generic handler for all part responses"""
+    user = update.effective_user
+    
+    try:
+        # Process voice message
+        transcription = await process_voice_message_for_simulation(update, context)
+        if not transcription:
+            return next_state - 1  # Stay in current state
+        
+        # Get stored prompt
+        speaking_prompt = context.user_data.get('current_speaking_prompt', 'Unknown prompt')
+        
+        # Evaluate response
+        evaluation = evaluate_speaking_response_for_simulation(
+            speaking_prompt, transcription, f"Part {part_number}"
+        )
+        
+        # Extract scores
+        scores = extract_scores_from_evaluation(evaluation)
+        
+        # Store response data
+        context.user_data['part_scores'][part_number] = scores['overall']
+        context.user_data['part_transcriptions'][part_number] = transcription
+        context.user_data['part_evaluations'][part_number] = evaluation
+        
+        # Save to database
+        session_id = context.user_data['simulation_session_id']
+        db.save_part_response(
+            session_id, part_number, speaking_prompt, 
+            transcription, scores, evaluation
+        )
+        
+        # Show part completion message (without scores)
+        completion_msg = (
+            f"✅ <b>Часть {part_number} завершена!</b>\n\n"
+            f"🎤 <b>Ваш ответ записан и обработан</b>\n\n"
+        )
+        
+        if next_state is None:
+            # Last part completed, show completion message
+            completion_msg += (
+                f" <b>Все части завершены!</b>\n\n"
+                f"⏳ Рассчитываю общий результат и готовлю детальный анализ..."
+            )
+            keyboard = [
+                [InlineKeyboardButton("⏳ Обрабатываю...", callback_data="processing")]
+            ]
+            
+            await update.message.reply_text(
+                text=completion_msg,
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            
+            # Calculate final results and end conversation
+            await calculate_and_show_final_results(update, context)
+            return ConversationHandler.END
+        else:
+            # Generate next part question
+            next_part_prompt = generate_speaking_question(part=f"Part {part_number + 1}")
+            context.user_data['current_speaking_prompt'] = next_part_prompt
+            
+            completion_msg += (
+                f"🔄 <b>Переходим к части {part_number + 1}</b>\n\n"
+                f"{next_part_prompt}\n\n"
+                f"🎤 <b>Запишите голосовой ответ</b>\n"
+                f"⏱️ <b>Рекомендуемое время:</b> "
+                f"{'1-2 минуты' if part_number + 1 == 2 else '30-90 секунд'}"
+            )
+            
+            keyboard = [
+                [InlineKeyboardButton("⏭️ Пропустить часть", callback_data=f"skip_part_{part_number + 1}")],
+                [InlineKeyboardButton("❌ Отменить симуляцию", callback_data="abandon_full_sim")]
+            ]
+            
+            await update.message.reply_text(
+                text=completion_msg,
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            
+            return next_state
+        
+    except Exception as e:
+        logger.error(f"🔥 Error processing part {part_number} response: {e}")
+        await update.message.reply_text(
+            f"❌ Произошла ошибка при обработке части {part_number}. Попробуйте еще раз.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Повторить", callback_data=f"retry_part_{part_number}")],
+                [InlineKeyboardButton("❌ Отменить", callback_data="abandon_full_sim")]
+            ])
+        )
+        return next_state - 1
+
+async def process_voice_message_for_simulation(update: Update, context: CallbackContext) -> str:
+    """Process voice message for simulation mode"""
+    user = update.effective_user
+    
+    try:
+        # Get voice file
+        voice = update.message.voice
+        if not voice:
+            await update.message.reply_text(
+                "❌ Пожалуйста, отправьте голосовое сообщение.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ Отменить", callback_data="abandon_full_sim")]
+                ])
+            )
+            return None
+        
+        # Send processing message
+        processing_msg = await update.message.reply_text(
+            "🔄 <b>Обрабатываю голосовое сообщение...</b>\n\n"
+            "📥 Загружаю аудио файл...",
+            parse_mode='HTML'
+        )
+        
+        # Download and transcribe
+        file_info = await context.bot.get_file(voice.file_id)
+        file_url = file_info.file_path
+        
+        # Update processing message
+        await processing_msg.edit_text(
+            "🔄 <b>Обрабатываю голосовое сообщение...</b>\n\n"
+            "✅ Аудио файл загружен\n"
+            "🎤 Распознаю речь...",
+            parse_mode='HTML'
+        )
+        
+        # Create temporary file
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.ogg') as temp_file:
+            temp_path = temp_file.name
+        
+        # Download file
+        if not await audio_processor.download_voice_file(file_url, temp_path):
+            await processing_msg.edit_text(
+                "❌ <b>Ошибка обработки</b>\n\n"
+                "Не удалось загрузить голосовое сообщение.\n"
+                "Попробуйте еще раз.",
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ Отменить", callback_data="abandon_full_sim")]
+                ])
+            )
+            return None
+        
+        # Update processing message
+        await processing_msg.edit_text(
+            "🔄 <b>Обрабатываю голосовое сообщение...</b>\n\n"
+            "✅ Аудио файл загружен\n"
+            "✅ Файл сохранен\n"
+            "🎤 Распознаю речь...",
+            parse_mode='HTML'
+        )
+        
+        # Transcribe
+        transcription = audio_processor.transcribe_audio(temp_path)
+        
+        # Clean up
+        import os
+        os.unlink(temp_path)
+        
+        if not transcription:
+            await processing_msg.edit_text(
+                "❌ <b>Ошибка распознавания</b>\n\n"
+                "Не удалось распознать речь в сообщении.\n"
+                "Попробуйте говорить четче и громче.",
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("❌ Отменить", callback_data="abandon_full_sim")]
+                ])
+            )
+            return None
+        
+        # Success message
+        await processing_msg.edit_text(
+            "✅ <b>Речь успешно распознана!</b>\n\n"
+            "📝 <b>Ваш ответ:</b>\n"
+            f"<i>«{transcription[:150]}{'...' if len(transcription) > 150 else ''}»</i>\n\n"
+            "⏳ Оцениваю ответ по критериям IELTS...",
+            parse_mode='HTML'
+        )
+        
+        return transcription
+        
+    except Exception as e:
+        logger.error(f"🔥 Error processing voice message: {e}")
+        await update.message.reply_text(
+            "❌ Произошла ошибка при обработке голосового сообщения.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("❌ Отменить", callback_data="abandon_full_sim")]
+            ])
+        )
+        return None
+
+async def calculate_and_show_final_results(update: Update, context: CallbackContext) -> None:
+    """Calculate final simulation results and display them"""
+    try:
+        # Calculate weighted overall score
+        part_scores = context.user_data['part_scores']
+        overall_score = calculate_weighted_overall_score(part_scores)
+        
+        # Determine IELTS band
+        overall_band = determine_ielts_band(overall_score)
+        
+        # Complete simulation in database with complete feedback
+        session_id = context.user_data['simulation_session_id']
+        
+        # Generate the complete results message first
+        feedback = generate_comprehensive_feedback(part_scores, overall_band)
+        
+        # Generate detailed analysis immediately
+        part_transcriptions = context.user_data.get('part_transcriptions', {})
+        part_evaluations = context.user_data.get('part_evaluations', {})
+        overall_criteria = calculate_overall_criteria_scores(part_scores, part_evaluations)
+        
+        detailed_analysis = generate_detailed_analysis(
+            part_scores, part_transcriptions, part_evaluations, overall_criteria
+        )
+        
+        # Create complete results message
+        results_message = (
+            f"🏆 <b>СИМУЛЯЦИЯ ЗАВЕРШЕНА!</b>\n\n"
+            f"🏆 <b>ОБЩИЙ РЕЗУЛЬТАТ: {overall_band}/9</b>\n\n"
+            f"📊 <b>ДЕТАЛЬНАЯ ОЦЕНКА ПО ЧАСТЯМ:</b>\n"
+            f"• Часть 1: {part_scores.get(1, 'N/A')}/9\n"
+            f"• Часть 2: {part_scores.get(2, 'N/A')}/9\n"
+            f"• Часть 3: {part_scores.get(3, 'N/A')}/9\n\n"
+            f"📋 <b>ОБЩАЯ ОЦЕНКА:</b>\n"
+            f"{feedback}\n\n"
+            f"⏱️ <b>Время симуляции:</b> "
+            f"{calculate_simulation_time(context)}\n\n"
+            f"{'='*50}\n\n"
+            f"{detailed_analysis}"
+        )
+        
+        # Save to database with complete feedback
+        db.complete_simulation(
+            session_id=session_id,
+            total_score=overall_score,
+            overall_band=overall_band,
+            complete_feedback=results_message
+        )
+        
+        # Show complete results with full analysis immediately
+        keyboard = [
+            [InlineKeyboardButton("🔄 Новая симуляция", callback_data="restart_full_sim")],
+            [InlineKeyboardButton("📈 Статистика", callback_data="speaking_stats")],
+            [InlineKeyboardButton("📋 Главное меню", callback_data="back_to_main_menu")]
+        ]
+        
+        # Handle both message and callback query contexts
+        if update.message:
+            await update.message.reply_text(
+                text=results_message,
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        elif update.callback_query:
+            await update.callback_query.edit_message_text(
+                text=results_message,
+                parse_mode='HTML',
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+        else:
+            # Fallback: send new message to user
+            user_id = context.user_data.get('user_id')
+            if user_id:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=results_message,
+                    parse_mode='HTML',
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+        
+        # Clear simulation data
+        context.user_data.clear()
+        
+    except Exception as e:
+        logger.error(f"🔥 Error calculating final results: {e}")
+        
+        # Handle error message based on context
+        error_message = "❌ Произошла ошибка при расчете результатов. Обратитесь к администратору."
+        error_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("📋 Главное меню", callback_data="back_to_main_menu")]
+        ])
+        
+        if update.message:
+            await update.message.reply_text(
+                error_message,
+                reply_markup=error_keyboard
+            )
+        elif update.callback_query:
+            await update.callback_query.edit_message_text(
+                error_message,
+                reply_markup=error_keyboard
+            )
+        else:
+            # Fallback: send error message to user
+            user_id = context.user_data.get('user_id')
+            if user_id:
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=error_message,
+                    reply_markup=error_keyboard
+                )
+
+async def skip_full_sim_part(update: Update, context: CallbackContext) -> int:
+    """Skip a part in full simulation"""
+    query = update.callback_query
+    await query.answer()
+    
+    part_number = int(query.data.split('_')[-1])
+    next_state = part_number + 1
+    
+    if next_state > 3:
+        # Skip to final evaluation
+        await calculate_and_show_final_results(update, context)
+        return ConversationHandler.END
+    
+    # Generate next part question
+    next_part_prompt = generate_speaking_question(part=f"Part {next_state}")
+    context.user_data['current_speaking_prompt'] = next_part_prompt
+    context.user_data['current_part'] = next_state
+    
+    # Mark current part as skipped
+    context.user_data['part_scores'][part_number] = 0
+    
+    completion_msg = (
+        f"⏭️ <b>Часть {part_number} пропущена</b>\n\n"
+        f"🔄 <b>Переходим к части {next_state}</b>\n\n"
+        f"{next_part_prompt}\n\n"
+        f"🎤 <b>Запишите голосовой ответ</b>\n"
+        f"⏱️ <b>Рекомендуемое время:</b> "
+        f"{'1-2 минуты' if next_state == 2 else '30-90 секунд'}"
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("⏭️ Пропустить часть", callback_data=f"skip_part_{next_state}")],
+        [InlineKeyboardButton("❌ Отменить симуляцию", callback_data="abandon_full_sim")]
+    ]
+    
+    await query.edit_message_text(
+        text=completion_msg,
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    
+    return next_state
+
+async def abandon_full_simulation(update: Update, context: CallbackContext) -> int:
+    """Abandon full simulation"""
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        # Mark simulation as abandoned in database
+        session_id = context.user_data.get('simulation_session_id')
+        if session_id:
+            db.abandon_simulation(session_id)
+        
+        # Clear context
+        context.user_data.clear()
+        
+        await query.edit_message_text(
+            "❌ <b>Симуляция отменена</b>\n\n"
+            "Вы можете начать новую симуляцию в любое время.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Новая симуляция", callback_data="full_speaking_sim")],
+                [InlineKeyboardButton("📋 Главное меню", callback_data="back_to_main_menu")]
+            ]),
+            parse_mode='HTML'
+        )
+        
+        return ConversationHandler.END
+        
+    except Exception as e:
+        logger.error(f"🔥 Error abandoning simulation: {e}")
+        await query.edit_message_text(
+            "❌ Произошла ошибка при отмене симуляции.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("📋 Главное меню", callback_data="back_to_main_menu")]
+            ])
+        )
+        return ConversationHandler.END
+
+async def restart_full_simulation(update: Update, context: CallbackContext) -> int:
+    """Restart full simulation"""
+    query = update.callback_query
+    await query.answer()
+    
+    # Clear previous simulation data
+    context.user_data.clear()
+    
+    # Start new simulation
+    return await start_full_speaking_simulation(update, context)
+
+
+
+async def cancel_full_simulation(update: Update, context: CallbackContext) -> int:
+    """Cancel full simulation via command"""
+    await update.message.reply_text(
+        "❌ <b>Симуляция отменена</b>\n\n"
+        "Вы можете начать новую симуляцию командой /speaking",
+        parse_mode='HTML'
+    )
+    
+    # Clear context
+    context.user_data.clear()
+    
+    return ConversationHandler.END
+
+
+
+async def handle_speaking_stats(update: Update, context: CallbackContext) -> None:
+    """Show user's speaking statistics"""
+    user = update.effective_user
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        # Get user's speaking statistics
+        stats = db.get_user_speaking_stats(user.id)
+        
+        stats_text = "📈 <b>Ваша статистика IELTS Speaking</b>\n\n"
+        stats_text += f"🎯 <b>Всего симуляций:</b> {stats['total_simulations']}\n"
+        stats_text += f"✅ <b>Завершено:</b> {stats['completed_simulations']}\n"
+        stats_text += f"🏆 <b>Лучший результат:</b> {stats['best_overall_score']}/9\n"
+        stats_text += f"📊 <b>Средний результат:</b> {stats['average_overall_score']:.1f}/9\n"
+        
+        if stats['last_simulation_date']:
+            last_date = stats['last_simulation_date'].split()[0] if isinstance(stats['last_simulation_date'], str) else str(stats['last_simulation_date']).split()[0]
+            stats_text += f"📅 <b>Последняя симуляция:</b> {last_date}\n"
+        
+        keyboard = [
+            [InlineKeyboardButton("🎯 Новая симуляция", callback_data="full_speaking_sim")],
+            [InlineKeyboardButton("🔙 Назад к профилю", callback_data="menu_profile")],
+            [InlineKeyboardButton("🔙 Назад к говорению", callback_data="menu_speaking")]
+        ]
+        
+        await query.edit_message_text(
+            text=stats_text,
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+    except Exception as e:
+        logger.error(f"🔥 Error showing speaking stats for user {user.id}: {e}")
+        await query.edit_message_text(
+            "❌ Произошла ошибка при загрузке статистики. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад", callback_data="menu_speaking")]
+            ])
+        )
+
+@require_access
+async def handle_writing_stats(update: Update, context: CallbackContext) -> None:
+    """Show user's writing statistics"""
+    user = update.effective_user
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        # Get user's writing statistics
+        stats = db.get_user_writing_stats(user.id)
+        
+        stats_text = "✍️ <b>Ваша статистика IELTS Writing</b>\n\n"
+        
+        if stats['total_evaluations'] > 0:
+            stats_text += f"📊 <b>Общая статистика:</b>\n"
+            stats_text += f"• Всего проверок: {stats['total_evaluations']}\n"
+            stats_text += f"• Средний балл: {stats['average_overall_score']:.1f}/9.0\n"
+            stats_text += f"• Лучший результат: {stats['best_overall_score']:.1f}/9.0\n"
+            
+            if stats['last_evaluation_date']:
+                last_date = stats['last_evaluation_date'].split()[0] if isinstance(stats['last_evaluation_date'], str) else str(stats['last_evaluation_date']).split()[0]
+                stats_text += f"• Последняя проверка: {last_date}\n"
+            
+            # Add detailed criterion scores if available
+            if stats['average_task_response_score'] > 0:
+                stats_text += f"\n📋 <b>Детальные критерии:</b>\n"
+                stats_text += f"• Task Response: {stats['average_task_response_score']:.1f}/9.0\n"
+                stats_text += f"• Coherence & Cohesion: {stats['average_coherence_cohesion_score']:.1f}/9.0\n"
+                stats_text += f"• Lexical Resource: {stats['average_lexical_resource_score']:.1f}/9.0\n"
+                stats_text += f"• Grammatical Range: {stats['average_grammatical_range_score']:.1f}/9.0\n"
+
+        else:
+            stats_text += "📊 <b>Общая статистика:</b>\n"
+            stats_text += "• Пока нет данных о проверках письма\n"
+            stats_text += "• Начните проверку письма для получения статистики\n"
+        
+        keyboard = [
+            [InlineKeyboardButton("📝 Проверить письмо", callback_data="writing_check")],
+            [InlineKeyboardButton("🔙 Назад к профилю", callback_data="menu_profile")],
+            [InlineKeyboardButton("🔙 Назад к письму", callback_data="menu_writing")]
+        ]
+        
+        await query.edit_message_text(
+            text=stats_text,
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+    except Exception as e:
+        logger.error(f"🔥 Error showing writing stats for user {user.id}: {e}")
+        await query.edit_message_text(
+            "❌ Произошла ошибка при загрузке статистики письма. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад", callback_data="menu_writing")]
+            ])
+        )
+
 # --- Conversation Handlers Setup (for main.py) ---
 writing_conversation_handler = ConversationHandler(
     entry_points=[CommandHandler("writing", start_writing_task)],
@@ -1453,10 +3066,11 @@ writing_conversation_handler = ConversationHandler(
             CallbackQueryHandler(handle_writing_task_type_callback, pattern=r'^writing_task_type_\d$'),
             CallbackQueryHandler(handle_writing_check_callback, pattern=r'^writing_check$'),
             CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$'),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, get_topic_and_generate_writing)
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_topic_input)
         ],
         GET_WRITING_SUBMISSION: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_submission),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$'),
         ],
         GET_WRITING_CHECK_TASK: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_check_task_input),
@@ -1465,7 +3079,11 @@ writing_conversation_handler = ConversationHandler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_check_essay_input),
         ],
     },
-    fallbacks=[CommandHandler("cancel", cancel)],
+    fallbacks=[
+        CommandHandler("cancel", cancel),
+        # Add a fallback for any text input to ensure writing submissions are handled
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_submission_fallback)
+    ],
     name="writing_conversation",
     persistent=False,
     per_message=False
@@ -1484,16 +3102,86 @@ grammar_conversation_handler = ConversationHandler(
 )
 
 vocabulary_conversation_handler = ConversationHandler(
-    entry_points=[CommandHandler("vocabulary", start_vocabulary_selection)],
+    entry_points=[
+        CommandHandler("vocabulary", start_vocabulary_selection),
+        CommandHandler("customword", custom_word_command),
+        CommandHandler("aicustomword", ai_custom_word_command),
+        CallbackQueryHandler(start_custom_word_input, pattern=r'^custom_word_add$'),
+        CallbackQueryHandler(handle_ai_enhanced_custom_word, pattern=r'^ai_enhanced_custom_word$')
+    ],
     states={
         GET_VOCABULARY_TOPIC: [
-            CallbackQueryHandler(handle_vocabulary_choice_callback, pattern=r'^vocabulary_(random|topic)$'),
+            CallbackQueryHandler(handle_vocabulary_choice_callback, pattern=r'^vocabulary_(random|topic|custom|ai_enhanced)$'),
             CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$'),
             MessageHandler(filters.TEXT & ~filters.COMMAND, get_topic_and_generate_vocabulary)
         ],
+        GET_CUSTOM_WORD: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_word_input),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$')
+        ],
+        GET_CUSTOM_WORD_DEFINITION: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_word_definition),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$')
+        ],
+        GET_CUSTOM_WORD_TRANSLATION: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_word_translation),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$')
+        ],
+        GET_CUSTOM_WORD_EXAMPLE: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_word_example),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$')
+        ],
+        GET_CUSTOM_WORD_TOPIC: [
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_word_topic),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$')
+        ],
     },
-    fallbacks=[CommandHandler("cancel", cancel)],
+    fallbacks=[
+        CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
+        CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$'),
+        CommandHandler("cancel", cancel)
+    ],
     name="vocabulary_conversation",
+    persistent=False,
+    per_message=False
+)
+
+# Custom word conversation handler is now integrated into vocabulary_conversation_handler
+
+# AI-enhanced custom word conversation handler is now integrated into vocabulary_conversation_handler
+
+# Full speaking simulation conversation handler
+full_speaking_simulation_handler = ConversationHandler(
+    entry_points=[
+        CallbackQueryHandler(start_full_speaking_simulation, pattern=r'^full_speaking_sim$')
+    ],
+    states={
+        FULL_SIM_PART_1: [
+            MessageHandler(filters.VOICE, handle_full_sim_part_1),
+            CallbackQueryHandler(skip_full_sim_part, pattern=r'^skip_part_1$'),
+            CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$')
+        ],
+        FULL_SIM_PART_2: [
+            MessageHandler(filters.VOICE, handle_full_sim_part_2),
+            CallbackQueryHandler(skip_full_sim_part, pattern=r'^skip_part_2$'),
+            CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$')
+        ],
+        FULL_SIM_PART_3: [
+            MessageHandler(filters.VOICE, handle_full_sim_part_3),
+            CallbackQueryHandler(skip_full_sim_part, pattern=r'^skip_part_3$'),
+            CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$')
+        ]
+    },
+    fallbacks=[
+        CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$'),
+        CommandHandler("cancel", cancel_full_simulation)
+    ],
+    name="full_speaking_simulation",
     persistent=False,
     per_message=False
 )

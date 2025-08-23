@@ -28,6 +28,7 @@ def main():
     application.add_handler(bot_handlers.writing_conversation_handler)
     application.add_handler(bot_handlers.grammar_conversation_handler)
     application.add_handler(bot_handlers.vocabulary_conversation_handler)
+    application.add_handler(bot_handlers.full_speaking_simulation_handler)
     logger.info("✅ Conversation handlers registered.")
 
     # --- Standard Command Handlers ---
@@ -36,6 +37,7 @@ def main():
     application.add_handler(CommandHandler("menu", bot_handlers.menu_command))
     application.add_handler(CommandHandler("speaking", bot_handlers.handle_speaking_command))
     application.add_handler(CommandHandler("info", bot_handlers.handle_info_command))
+    application.add_handler(CommandHandler("debug", bot_handlers.debug_conversation_state))  # Debug command
     
     # --- Admin Command Handlers ---
     application.add_handler(CommandHandler("admin", bot_handlers.admin_command))
@@ -65,11 +67,12 @@ def main():
     # --- Callback Query Handlers (for all inline buttons) ---
     # Handlers for initial menu selections
     application.add_handler(CallbackQueryHandler(bot_handlers.speaking_part_callback, pattern=r'^speaking_part_\d$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_voice_confirmation, pattern=r'^confirm_voice_\d$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.info_section_callback, pattern=r'^info_(listening|reading)_'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_start_buttons, pattern=r'^(menu_help|help_button)$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.menu_button_callback, pattern=r'^menu_(vocabulary|writing|speaking|info|grammar|profile)$|^back_to_main_menu$'))
     # Add global handlers for vocabulary and writing buttons (for menu-based access)
-    application.add_handler(CallbackQueryHandler(bot_handlers.handle_vocabulary_choice_global, pattern=r'^vocabulary_(random|topic)$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_vocabulary_choice_global, pattern=r'^vocabulary_(random|topic|custom|ai_enhanced)$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_writing_task_type_global, pattern=r'^writing_task_type_\d$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_writing_check_global, pattern=r'^writing_check$'))
     # Add handlers for personalization features
@@ -77,6 +80,9 @@ def main():
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_profile_vocabulary, pattern=r'^profile_vocabulary$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_clear_vocabulary, pattern=r'^clear_vocabulary$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_confirm_clear_vocabulary, pattern=r'^confirm_clear_vocabulary$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_custom_word_add_callback, pattern=r'^custom_word_add$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_custom_word_add_from_menu, pattern=r'^custom_word_add_from_menu$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_ai_enhanced_custom_word, pattern=r'^ai_enhanced_custom_word$'))
     
     # Add handlers for admin features
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_panel_callback, pattern=r'^admin_panel$'))
@@ -85,6 +91,13 @@ def main():
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_detailed_stats, pattern=r'^admin_stats$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_help, pattern=r'^admin_help$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_admin_users_pagination, pattern=r'^admin_users_page_\d+$'))
+    
+    # Add handlers for full speaking simulation
+    application.add_handler(CallbackQueryHandler(bot_handlers.restart_full_simulation, pattern=r'^restart_full_sim$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.abandon_full_simulation, pattern=r'^abandon_full_sim$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.skip_full_sim_part, pattern=r'^skip_part_\d$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_speaking_stats, pattern=r'^speaking_stats$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_writing_stats, pattern=r'^writing_stats$'))
     
     logger.info("✅ Callback query handlers registered.")
 
