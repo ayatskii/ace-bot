@@ -518,6 +518,7 @@ def evaluate_speaking_response_for_simulation(speaking_prompt: str,
     🔤 <b>Грамматика (GRA):</b> [Score] - [Brief 1 sentence evaluation]
     🎵 <b>Произношение (P):</b> [Score] - [Brief 1 sentence evaluation]
 
+python main.py
     <b>🎯 РЕКОМЕНДАЦИИ:</b>
     ✅ <b>Сильные стороны:</b> [1-2 key strengths in one sentence]
     🔧 <b>Улучшить:</b> [2-3 specific improvement areas with actionable advice in 1-2 sentences]
@@ -570,6 +571,52 @@ def extract_scores_from_evaluation(evaluation_text: str) -> dict:
         
     except Exception as e:
         logger.error(f"🔥 Error extracting scores from evaluation: {e}")
+    
+    return scores
+
+def extract_writing_scores_from_evaluation(evaluation_text: str) -> dict:
+    """Extract numerical scores from writing evaluation text"""
+    import re
+    
+    scores = {
+        'overall': 0.0,
+        'task_response': 0.0,
+        'coherence_cohesion': 0.0,
+        'lexical_resource': 0.0,
+        'grammatical_range': 0.0,
+        'summary': ''
+    }
+    
+    try:
+        # Extract overall score
+        overall_match = re.search(r'🎯 Overall Band Score: ([\d.]+)', evaluation_text)
+        if overall_match:
+            scores['overall'] = float(overall_match.group(1))
+        
+        # Extract individual criterion scores
+        task_response_match = re.search(r'📌 Task Response \(TR\): Band ([\d.]+)', evaluation_text)
+        if task_response_match:
+            scores['task_response'] = float(task_response_match.group(1))
+        
+        coherence_match = re.search(r'📌 Coherence & Cohesion \(CC\): Band ([\d.]+)', evaluation_text)
+        if coherence_match:
+            scores['coherence_cohesion'] = float(coherence_match.group(1))
+        
+        lexical_match = re.search(r'📌 Lexical Resource \(LR\): Band ([\d.]+)', evaluation_text)
+        if lexical_match:
+            scores['lexical_resource'] = float(lexical_match.group(1))
+        
+        grammar_match = re.search(r'📌 Grammatical Range & Accuracy \(GRA\): Band ([\d.]+)', evaluation_text)
+        if grammar_match:
+            scores['grammatical_range'] = float(grammar_match.group(1))
+        
+        # Extract summary
+        summary_match = re.search(r'📝 Examiner\'s General Comments:\n([^<]+)', evaluation_text)
+        if summary_match:
+            scores['summary'] = summary_match.group(1).strip()
+        
+    except Exception as e:
+        logger.error(f"🔥 Error extracting writing scores from evaluation: {e}")
     
     return scores
 

@@ -11,7 +11,7 @@ from gemini_api import (
     get_random_word_details, generate_ielts_writing_task, evaluate_writing,
     generate_speaking_question, generate_ielts_strategies, explain_grammar_structure,
     get_topic_specific_words, evaluate_speaking_response, evaluate_speaking_response_for_simulation,
-    extract_scores_from_evaluation, add_custom_word_to_dictionary
+    extract_scores_from_evaluation, extract_writing_scores_from_evaluation, add_custom_word_to_dictionary
 )
 from audio_processor import audio_processor
 
@@ -808,14 +808,8 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
         await query.edit_message_text("📖 Какой тип словаря вы хотите?", reply_markup=reply_markup)
         
     elif data == "menu_writing":
-        # Handle writing menu selection - direct approach to avoid conversation handler conflicts
-        keyboard = [
-            [InlineKeyboardButton("Задание 2 (Эссе)", callback_data="writing_task_type_2")],
-            [InlineKeyboardButton("📝 Проверить письмо", callback_data="writing_check")],
-            [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await query.edit_message_text("✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
+        # Handle writing menu selection - start writing conversation
+        await start_writing_task(update, context)
         
     elif data == "menu_grammar":
         # Handle grammar menu selection
@@ -921,11 +915,29 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
                 profile_text += f"\n✅ Завершено: 0"
                 logger.error(f"🔥 Failed to get speaking stats: {e}")
             
+            # Add writing statistics safely
+            try:
+                writing_stats = db.get_user_writing_stats(user.id)
+                profile_text += f"\n\n✍️ <b>Статистика письма:</b>"
+                profile_text += f"\n📝 Всего проверок: {writing_stats['total_evaluations']}"
+                if writing_stats['average_overall_score'] > 0:
+                    profile_text += f"\n📈 Средний балл: {writing_stats['average_overall_score']:.1f}/9.0"
+                if writing_stats['best_overall_score'] > 0:
+                    profile_text += f"\n🏆 Лучший результат: {writing_stats['best_overall_score']:.1f}/9.0"
+                if writing_stats['last_evaluation_date']:
+                    profile_text += f"\n🕐 Последняя проверка: {writing_stats['last_evaluation_date']}"
+                logger.info(f"✅ Writing stats for user {user.id}: {writing_stats}")
+            except Exception as e:
+                profile_text += f"\n\n✍️ <b>Статистика письма:</b>"
+                profile_text += f"\n📝 Всего проверок: 0"
+                logger.error(f"🔥 Failed to get writing stats: {e}")
+            
             logger.info(f"📝 Profile text created: {len(profile_text)} chars")
             
             keyboard = [
                 [InlineKeyboardButton("📖 Мой словарь", callback_data="profile_vocabulary")],
                 [InlineKeyboardButton("📊 Статистика говорения", callback_data="speaking_stats")],
+                [InlineKeyboardButton("✍️ Статистика письма", callback_data="writing_stats")],
                 [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1566,27 +1578,48 @@ async def ai_custom_word_command(update: Update, context: CallbackContext) -> in
 # --- WRITING (Conversation) ---
 @require_access
 async def start_writing_task(update: Update, context: CallbackContext, force_new_message=False) -> int:
+    # Get writing stats for quick preview
+    user = update.effective_user
+    try:
+        writing_stats = db.get_user_writing_stats(user.id)
+        if writing_stats['total_evaluations'] > 0:
+            stats_preview = f"\n\n📊 <b>Ваша статистика:</b>\n"
+            stats_preview += f"• Проверок: {writing_stats['total_evaluations']}\n"
+            stats_preview += f"• Средний балл: {writing_stats['average_overall_score']:.1f}/9.0\n"
+            stats_preview += f"• Лучший результат: {writing_stats['best_overall_score']:.1f}/9.0"
+        else:
+            stats_preview = "\n\n📊 <b>Ваша статистика:</b>\n• Пока нет данных"
+    except Exception as e:
+        stats_preview = "\n\n📊 <b>Ваша статистика:</b>\n• Не удалось загрузить"
+        logger.error(f"🔥 Failed to get writing stats preview: {e}")
+    
     keyboard = [
         [InlineKeyboardButton("Задание 2 (Эссе)", callback_data="writing_task_type_2")],
         [InlineKeyboardButton("📝 Проверить письмо", callback_data="writing_check")],
+        [InlineKeyboardButton("📊 Статистика письма", callback_data="writing_stats")],
         [InlineKeyboardButton("🔙 Назад в меню", callback_data="back_to_main_menu")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    message_text = f"✍️ <b>IELTS Writing Practice</b>{stats_preview}\n\nВыберите действие:"
+    
     if force_new_message:
         # Try to edit if possible, else send new message
         if hasattr(update, 'callback_query') and update.callback_query:
-            await update.callback_query.edit_message_text("✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
+            await update.callback_query.edit_message_text(message_text, reply_markup=reply_markup, parse_mode='HTML')
         elif hasattr(update, 'message') and update.message:
-            await update.message.reply_text("✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
+            await update.message.reply_text(message_text, reply_markup=reply_markup, parse_mode='HTML')
         else:
             chat_id = update.effective_chat.id if update.effective_chat else None
             if chat_id:
-                await context.bot.send_message(chat_id=chat_id, text="✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
+                await context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup, parse_mode='HTML')
         return GET_WRITING_TOPIC
+    
     if hasattr(update, 'callback_query') and update.callback_query:
-        await update.callback_query.edit_message_text("✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
+        await update.callback_query.edit_message_text(message_text, reply_markup=reply_markup, parse_mode='HTML')
     elif hasattr(update, 'message') and update.message:
-        await update.message.reply_text("✍️ Какой тип письменного задания вам нужен?", reply_markup=reply_markup)
+        await update.message.reply_text(message_text, reply_markup=reply_markup, parse_mode='HTML')
+    
     return GET_WRITING_TOPIC
 
 @require_access
@@ -1612,8 +1645,8 @@ async def handle_writing_task_type_callback(update: Update, context: CallbackCon
     return GET_WRITING_TOPIC
 
 @require_access
-async def handle_writing_topic_input(update: Update, context: CallbackContext) -> None:
-    """Handle writing topic input from users, works globally"""
+async def handle_writing_topic_input(update: Update, context: CallbackContext) -> int:
+    """Handle writing topic input from users"""
     user_topic = update.message.text
     selected_task_type = context.user_data.get('selected_writing_task_type', 'Task 2')
     context.user_data['current_writing_topic'] = user_topic
@@ -1629,44 +1662,101 @@ async def handle_writing_topic_input(update: Update, context: CallbackContext) -
     message_text = (f"Вот ваше {selected_task_type}:\n\n{writing_task}\n\n"
                     "Пожалуйста, напишите ваш ответ и отправьте его мне.")
     await send_or_edit_safe_text(update, context, message_text, reply_markup)
+    
+    # Debug logging for state transition
     logger.info(f"✅ Writing task generated for user {update.effective_user.id}")
-    await menu_command(update, context, force_new_message=True)
-
-@require_access
-async def get_topic_and_generate_writing(update: Update, context: CallbackContext) -> int:
-    user_topic = update.message.text
-    selected_task_type = context.user_data.get('selected_writing_task_type', 'Task 2')
-    context.user_data['current_writing_topic'] = user_topic
-    logger.info(f"🎯 Writing: User {update.effective_user.id} provided topic: '{user_topic}' for {selected_task_type}")
+    logger.info(f"🔍 Debug: Setting current_writing_task_description: '{writing_task[:100]}...'")
+    logger.info(f"🔍 Debug: User data keys: {list(context.user_data.keys())}")
+    logger.info(f"🔍 Debug: Moving to GET_WRITING_SUBMISSION state")
     
-    await update.message.reply_text(f"✅ Great! Generating a {selected_task_type} task on the topic: '{user_topic}'...")
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
-    
-    writing_task = generate_ielts_writing_task(task_type=selected_task_type, topic=user_topic)
-    context.user_data['current_writing_task_description'] = writing_task
-    
-    reply_markup = None
-    message_text = (f"Here is your {selected_task_type}:\n\n{writing_task}\n\n"
-                    "Please write your response and send it to me.")
-    await send_or_edit_safe_text(update, context, message_text, reply_markup)
-    logger.info(f"✅ Writing task generated for user {update.effective_user.id}, moving to submission state")
-    await menu_command(update, context, force_new_message=True)
     return GET_WRITING_SUBMISSION
+
+# This function has been replaced by handle_writing_topic_input
 
 @require_access
 async def handle_writing_submission(update: Update, context: CallbackContext) -> int:
     student_writing = update.message.text
     task_description = context.user_data.get('current_writing_task_description', 'No specific task given.')
     
-    await update.message.reply_text("Checking your writing, please wait...")
+    # Debug logging for submission handling
+    logger.info(f"✍️ Writing submission received for user {update.effective_user.id}")
+    logger.info(f"🔍 Debug: Essay length: {len(student_writing)} characters")
+    logger.info(f"🔍 Debug: Task description: '{task_description[:100]}...'")
+    logger.info(f"🔍 Debug: User data keys: {list(context.user_data.keys())}")
+    logger.info(f"🔍 Debug: Current conversation state: {context.user_data.get('_conversation_state', 'Unknown')}")
+    
+    await update.message.reply_text("📝 Проверяю ваше письмо, пожалуйста, подождите...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     feedback = evaluate_writing(writing_text=student_writing, task_description=task_description)
+    
+    # Extract scores from the feedback for statistics
+    scores = extract_writing_scores_from_evaluation(feedback)
+    
+    # Save the evaluation to database
+    if scores['overall'] > 0:
+        success = db.save_writing_evaluation(
+            user_id=update.effective_user.id,
+            task_description=task_description,
+            essay_text=student_writing,
+            overall_score=scores['overall'],
+            task_response_score=scores['task_response'],
+            coherence_cohesion_score=scores['coherence_cohesion'],
+            lexical_resource_score=scores['lexical_resource'],
+            grammatical_range_score=scores['grammatical_range'],
+            evaluation_feedback=feedback
+        )
+        if success:
+            logger.info(f"✅ Writing evaluation saved to database for user {update.effective_user.id}")
+        else:
+            logger.warning(f"⚠️ Failed to save writing evaluation to database for user {update.effective_user.id}")
+    
+    # Display the feedback
     await send_or_edit_safe_text(update, context, feedback)
     
-    context.user_data.clear()
-    await menu_command(update, context, force_new_message=True)
+    # Clear the writing task data
+    context.user_data.pop('current_writing_task_description', None)
+    context.user_data.pop('current_writing_topic', None)
+    context.user_data.pop('selected_writing_task_type', None)
+    
+    # Show completion message with options
+    completion_keyboard = [
+        [InlineKeyboardButton("📊 Посмотреть статистику", callback_data="writing_stats")],
+        [InlineKeyboardButton("✍️ Новое задание", callback_data="menu_writing")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main_menu")]
+    ]
+    completion_markup = InlineKeyboardMarkup(completion_keyboard)
+    
+    await update.message.reply_text(
+        "✅ <b>Проверка письма завершена!</b>\n\n"
+        "Ваше письмо было оценено и сохранено в статистике. "
+        "Вы можете посмотреть свой прогресс или начать новое задание.",
+        reply_markup=completion_markup,
+        parse_mode='HTML'
+    )
+    
+    logger.info(f"✅ Writing evaluation completed for user {update.effective_user.id}")
     return ConversationHandler.END
+
+@require_access
+async def handle_writing_submission_fallback(update: Update, context: CallbackContext) -> int:
+    """Fallback handler for writing submissions when conversation handler fails"""
+    logger.info(f"🔄 Writing submission fallback handler called for user {update.effective_user.id}")
+    
+    # Check if user has a writing task
+    if context.user_data.get('current_writing_task_description'):
+        logger.info(f"✅ Fallback: User has writing task, processing submission")
+        return await handle_writing_submission(update, context)
+    else:
+        logger.warning(f"⚠️ Fallback: User has no writing task, ending conversation")
+        await update.message.reply_text(
+            "❌ Не удалось определить задание для письма. Пожалуйста, начните заново.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✍️ Новое задание", callback_data="menu_writing")],
+                [InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main_menu")]
+            ])
+        )
+        return ConversationHandler.END
 
 @require_access
 async def handle_writing_check_callback(update: Update, context: CallbackContext) -> int:
@@ -2042,22 +2132,59 @@ async def handle_writing_check_essay_input(update: Update, context: CallbackCont
     """Handle writing check essay input from users - second step of writing check"""
     essay_text = update.message.text
     task_description = context.user_data.get('current_writing_check_task', 'No task provided')
-    logger.info(f"🎯 Writing Check Essay: User {update.effective_user.id} submitted essay for evaluation")
+    user = update.effective_user
+    logger.info(f"🎯 Writing Check Essay: User {user.id} submitted essay for evaluation")
     
     await update.message.reply_text("📝 Проверяю ваше письмо, пожалуйста, подождите...")
     await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     
     feedback = evaluate_writing(writing_text=essay_text, task_description=task_description)
     
+    # Extract scores from the feedback
+    scores = extract_writing_scores_from_evaluation(feedback)
+    
+    # Save the evaluation to database
+    if scores['overall'] > 0:
+        success = db.save_writing_evaluation(
+            user_id=user.id,
+            task_description=task_description,
+            essay_text=essay_text,
+            overall_score=scores['overall'],
+            task_response_score=scores['task_response'],
+            coherence_cohesion_score=scores['coherence_cohesion'],
+            lexical_resource_score=scores['lexical_resource'],
+            grammatical_range_score=scores['grammatical_range'],
+            evaluation_feedback=feedback
+        )
+        if success:
+            logger.info(f"✅ Writing evaluation saved to database for user {user.id}")
+        else:
+            logger.warning(f"⚠️ Failed to save writing evaluation to database for user {user.id}")
+    
     # Use send_or_edit_safe_text to ensure proper markdown formatting with fallback
     reply_markup = None
     await send_or_edit_safe_text(update, context, feedback, reply_markup)
-    logger.info(f"✅ Writing evaluation completed for user {update.effective_user.id}")
+    logger.info(f"✅ Writing evaluation completed for user {user.id}")
     
     # Clear the writing check data
     context.user_data.pop('current_writing_check_task', None)
     
-    await menu_command(update, context, force_new_message=True)
+    # Show completion message with options
+    completion_keyboard = [
+        [InlineKeyboardButton("📊 Посмотреть статистику", callback_data="writing_stats")],
+        [InlineKeyboardButton("📝 Проверить еще одно письмо", callback_data="writing_check")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main_menu")]
+    ]
+    completion_markup = InlineKeyboardMarkup(completion_keyboard)
+    
+    await update.message.reply_text(
+        "✅ <b>Проверка письма завершена!</b>\n\n"
+        "Ваше письмо было оценено и сохранено в статистике. "
+        "Вы можете посмотреть свой прогресс или проверить другое письмо.",
+        reply_markup=completion_markup,
+        parse_mode='HTML'
+    )
+    
     return ConversationHandler.END
 
 @require_access
@@ -2103,12 +2230,54 @@ async def handle_global_text_input(update: Update, context: CallbackContext) -> 
         await handle_writing_check_essay_input(update, context)
         return
     
+    # Check if user is in writing submission mode (for conversation handler access)
+    if context.user_data.get('current_writing_task_description'):
+        logger.info(f"✍️ User {user.id} is in writing submission mode (global) - task: '{context.user_data['current_writing_task_description'][:50]}...'")
+        logger.info(f"🔍 Debug: Global handler processing writing submission")
+        logger.info(f"🔍 Debug: User data keys: {list(context.user_data.keys())}")
+        logger.info(f"🔍 Debug: Processing via global handler (conversation handler may have failed)")
+        await handle_writing_submission(update, context)
+        return
+    
+    # Additional check: if user has writing topic but no task description, they might be in the middle of generation
+    if context.user_data.get('current_writing_topic') and not context.user_data.get('current_writing_task_description'):
+        logger.info(f"🔄 User {user.id} has writing topic but no task yet - waiting for generation")
+        await update.message.reply_text(
+            "⏳ Пожалуйста, подождите, пока генерируется задание для письма...",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад к письму", callback_data="menu_writing")]
+            ])
+        )
+        return
+    
     # Check if admin is searching for users
     if context.user_data.get('waiting_for_admin_search'):
         logger.info(f"🔍 Admin {user.id} is searching for users")
         context.user_data.pop('waiting_for_admin_search', None)
         await handle_admin_search_input(update, context)
         return
+    
+    # If not in any specific mode, check if this might be a writing submission
+    # This is a safety net for when the conversation handler fails
+    if len(update.message.text) > 50:  # Likely an essay submission
+        logger.info(f"🔍 User {user.id} sent long text ({len(update.message.text)} chars) - checking if it's a writing submission")
+        
+        # Check if user has any writing-related data
+        if (context.user_data.get('current_writing_topic') or 
+            context.user_data.get('selected_writing_task_type') or
+            context.user_data.get('current_writing_task_description')):
+            
+            logger.info(f"✅ Long text detected with writing context - treating as writing submission")
+            if context.user_data.get('current_writing_task_description'):
+                await handle_writing_submission(update, context)
+            else:
+                await update.message.reply_text(
+                    "⏳ Задание для письма еще генерируется. Пожалуйста, подождите...",
+                    reply_markup=InlineKeyboardMarkup([
+                        [InlineKeyboardButton("🔙 Назад к письму", callback_data="menu_writing")]
+                    ])
+                )
+            return
     
     # If not in any specific mode, ignore the text
     # This prevents the global handler from interfering with conversation handlers
@@ -2119,6 +2288,23 @@ async def handle_global_text_input(update: Update, context: CallbackContext) -> 
 async def cancel(update: Update, context: CallbackContext) -> int:
     await update.message.reply_text("Operation cancelled.")
     return ConversationHandler.END
+
+async def debug_conversation_state(update: Update, context: CallbackContext) -> None:
+    """Debug function to check current conversation state"""
+    user = update.effective_user
+    logger.info(f"🔍 Debug: User {user.id} conversation state check")
+    logger.info(f"🔍 Debug: User data keys: {list(context.user_data.keys())}")
+    logger.info(f"🔍 Debug: Current writing topic: {context.user_data.get('current_writing_topic', 'None')}")
+    logger.info(f"🔍 Debug: Current writing task: {context.user_data.get('current_writing_task_description', 'None')[:100] if context.user_data.get('current_writing_task_description') else 'None'}")
+    
+    await update.message.reply_text(
+        f"🔍 <b>Debug Info:</b>\n\n"
+        f"User ID: {user.id}\n"
+        f"Writing Topic: {context.user_data.get('current_writing_topic', 'None')}\n"
+        f"Writing Task: {context.user_data.get('current_writing_task_description', 'None')[:100] if context.user_data.get('current_writing_task_description') else 'None'}...\n"
+        f"User Data Keys: {', '.join(context.user_data.keys())}",
+        parse_mode='HTML'
+    )
 
 async def error_handler(update: object, context: CallbackContext) -> None:
     logger.error(f"Update '{update}' caused error '{context.error}'")
@@ -2815,6 +3001,63 @@ async def handle_speaking_stats(update: Update, context: CallbackContext) -> Non
             ])
         )
 
+@require_access
+async def handle_writing_stats(update: Update, context: CallbackContext) -> None:
+    """Show user's writing statistics"""
+    user = update.effective_user
+    query = update.callback_query
+    await query.answer()
+    
+    try:
+        # Get user's writing statistics
+        stats = db.get_user_writing_stats(user.id)
+        
+        stats_text = "✍️ <b>Ваша статистика IELTS Writing</b>\n\n"
+        
+        if stats['total_evaluations'] > 0:
+            stats_text += f"📊 <b>Общая статистика:</b>\n"
+            stats_text += f"• Всего проверок: {stats['total_evaluations']}\n"
+            stats_text += f"• Средний балл: {stats['average_overall_score']:.1f}/9.0\n"
+            stats_text += f"• Лучший результат: {stats['best_overall_score']:.1f}/9.0\n"
+            
+            if stats['last_evaluation_date']:
+                last_date = stats['last_evaluation_date'].split()[0] if isinstance(stats['last_evaluation_date'], str) else str(stats['last_evaluation_date']).split()[0]
+                stats_text += f"• Последняя проверка: {last_date}\n"
+            
+            # Add detailed criterion scores if available
+            if stats['average_task_response_score'] > 0:
+                stats_text += f"\n📋 <b>Детальные критерии:</b>\n"
+                stats_text += f"• Task Response: {stats['average_task_response_score']:.1f}/9.0\n"
+                stats_text += f"• Coherence & Cohesion: {stats['average_coherence_cohesion_score']:.1f}/9.0\n"
+                stats_text += f"• Lexical Resource: {stats['average_lexical_resource_score']:.1f}/9.0\n"
+                stats_text += f"• Grammatical Range: {stats['average_grammatical_range_score']:.1f}/9.0\n"
+
+        else:
+            stats_text += "📊 <b>Общая статистика:</b>\n"
+            stats_text += "• Пока нет данных о проверках письма\n"
+            stats_text += "• Начните проверку письма для получения статистики\n"
+        
+        keyboard = [
+            [InlineKeyboardButton("📝 Проверить письмо", callback_data="writing_check")],
+            [InlineKeyboardButton("🔙 Назад к профилю", callback_data="menu_profile")],
+            [InlineKeyboardButton("🔙 Назад к письму", callback_data="menu_writing")]
+        ]
+        
+        await query.edit_message_text(
+            text=stats_text,
+            parse_mode='HTML',
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+        
+    except Exception as e:
+        logger.error(f"🔥 Error showing writing stats for user {user.id}: {e}")
+        await query.edit_message_text(
+            "❌ Произошла ошибка при загрузке статистики письма. Попробуйте позже.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔙 Назад", callback_data="menu_writing")]
+            ])
+        )
+
 # --- Conversation Handlers Setup (for main.py) ---
 writing_conversation_handler = ConversationHandler(
     entry_points=[CommandHandler("writing", start_writing_task)],
@@ -2823,10 +3066,11 @@ writing_conversation_handler = ConversationHandler(
             CallbackQueryHandler(handle_writing_task_type_callback, pattern=r'^writing_task_type_\d$'),
             CallbackQueryHandler(handle_writing_check_callback, pattern=r'^writing_check$'),
             CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$'),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, get_topic_and_generate_writing)
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_topic_input)
         ],
         GET_WRITING_SUBMISSION: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_submission),
+            CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$'),
         ],
         GET_WRITING_CHECK_TASK: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_check_task_input),
@@ -2835,7 +3079,11 @@ writing_conversation_handler = ConversationHandler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_check_essay_input),
         ],
     },
-    fallbacks=[CommandHandler("cancel", cancel)],
+    fallbacks=[
+        CommandHandler("cancel", cancel),
+        # Add a fallback for any text input to ensure writing submissions are handled
+        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_submission_fallback)
+    ],
     name="writing_conversation",
     persistent=False,
     per_message=False

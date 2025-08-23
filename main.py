@@ -37,6 +37,7 @@ def main():
     application.add_handler(CommandHandler("menu", bot_handlers.menu_command))
     application.add_handler(CommandHandler("speaking", bot_handlers.handle_speaking_command))
     application.add_handler(CommandHandler("info", bot_handlers.handle_info_command))
+    application.add_handler(CommandHandler("debug", bot_handlers.debug_conversation_state))  # Debug command
     
     # --- Admin Command Handlers ---
     application.add_handler(CommandHandler("admin", bot_handlers.admin_command))
@@ -96,6 +97,7 @@ def main():
     application.add_handler(CallbackQueryHandler(bot_handlers.abandon_full_simulation, pattern=r'^abandon_full_sim$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.skip_full_sim_part, pattern=r'^skip_part_\d$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_speaking_stats, pattern=r'^speaking_stats$'))
+    application.add_handler(CallbackQueryHandler(bot_handlers.handle_writing_stats, pattern=r'^writing_stats$'))
     
     logger.info("✅ Callback query handlers registered.")
 
