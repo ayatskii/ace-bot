@@ -133,6 +133,8 @@ dmypy.json
 .env
 .env.local
 .env.production
+bot_env
+
 
 # Database files
 *.db
