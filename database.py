@@ -185,6 +185,115 @@ class DatabaseManager:
                     )
                 ''')
                 
+                # === FLASHCARD SYSTEM TABLES ===
+                
+                # Create flashcard decks table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS flashcard_decks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        description TEXT,
+                        creator_user_id INTEGER NOT NULL,
+                        is_public BOOLEAN DEFAULT 0,
+                        is_shared BOOLEAN DEFAULT 0,
+                        category TEXT DEFAULT 'General',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        card_count INTEGER DEFAULT 0,
+                        FOREIGN KEY (creator_user_id) REFERENCES users (user_id)
+                    )
+                ''')
+                
+                # Create flashcards table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS flashcards (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        deck_id INTEGER NOT NULL,
+                        front_text TEXT NOT NULL,
+                        back_text TEXT NOT NULL,
+                        front_image_url TEXT,
+                        back_image_url TEXT,
+                        front_audio_url TEXT,
+                        back_audio_url TEXT,
+                        tags TEXT,
+                        difficulty INTEGER DEFAULT 1 CHECK (difficulty IN (1, 2, 3, 4, 5)),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (deck_id) REFERENCES flashcard_decks (id) ON DELETE CASCADE
+                    )
+                ''')
+                
+                # Create user progress table (Spaced Repetition SM-2)
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS user_card_progress (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        card_id INTEGER NOT NULL,
+                        ease_factor REAL DEFAULT 2.5,
+                        interval_days INTEGER DEFAULT 1,
+                        due_date DATE NOT NULL,
+                        review_count INTEGER DEFAULT 0,
+                        streak_count INTEGER DEFAULT 0,
+                        last_reviewed TIMESTAMP,
+                        last_rating INTEGER,
+                        total_time_spent INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users (user_id),
+                        FOREIGN KEY (card_id) REFERENCES flashcards (id) ON DELETE CASCADE,
+                        UNIQUE(user_id, card_id)
+                    )
+                ''')
+                
+                # Create study sessions table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS study_sessions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        deck_id INTEGER,
+                        session_type TEXT DEFAULT 'review' CHECK (session_type IN ('review', 'learn', 'cram')),
+                        cards_studied INTEGER DEFAULT 0,
+                        cards_correct INTEGER DEFAULT 0,
+                        session_duration INTEGER DEFAULT 0,
+                        started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        completed_at TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users (user_id),
+                        FOREIGN KEY (deck_id) REFERENCES flashcard_decks (id)
+                    )
+                ''')
+                
+                # Create user deck subscriptions table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS user_deck_subscriptions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        user_id INTEGER NOT NULL,
+                        deck_id INTEGER NOT NULL,
+                        subscribed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        is_active BOOLEAN DEFAULT 1,
+                        notification_enabled BOOLEAN DEFAULT 1,
+                        FOREIGN KEY (user_id) REFERENCES users (user_id),
+                        FOREIGN KEY (deck_id) REFERENCES flashcard_decks (id) ON DELETE CASCADE,
+                        UNIQUE(user_id, deck_id)
+                    )
+                ''')
+                
+                # Create user learning statistics table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS user_learning_stats (
+                        user_id INTEGER PRIMARY KEY,
+                        total_cards_studied INTEGER DEFAULT 0,
+                        total_study_time INTEGER DEFAULT 0,
+                        current_streak INTEGER DEFAULT 0,
+                        longest_streak INTEGER DEFAULT 0,
+                        cards_due_today INTEGER DEFAULT 0,
+                        last_study_date DATE,
+                        level INTEGER DEFAULT 1,
+                        experience_points INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        FOREIGN KEY (user_id) REFERENCES users (user_id)
+                    )
+                ''')
+                
                 # Create indexes for better performance
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_sessions ON speaking_simulations (user_id, started_at)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_session_status ON speaking_simulations (status)')
@@ -192,6 +301,15 @@ class DatabaseManager:
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_writing_evaluations ON writing_evaluations (user_id, evaluated_at)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_group_sent_words ON group_sent_words (group_id, sent_at)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_group_activity ON group_chats (last_activity)')
+                
+                # Flashcard system indexes
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_flashcards_deck ON flashcards (deck_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_progress_due ON user_card_progress (user_id, due_date)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_progress_card ON user_card_progress (card_id)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_study_sessions_user ON study_sessions (user_id, started_at)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_deck_subscriptions ON user_deck_subscriptions (user_id, is_active)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_public_decks ON flashcard_decks (is_public, category)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_deck_creator ON flashcard_decks (creator_user_id)')
                 
                 conn.commit()
                 logger.info("✅ Database initialized successfully")
@@ -1350,6 +1468,249 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"🔥 Failed to get groups with auto-send: {e}")
             return []
+
+    # === FLASHCARD SYSTEM FUNCTIONS ===
+    
+    def create_deck(self, user_id: int, name: str, description: str = "", category: str = "General", is_public: bool = False) -> int:
+        """Create a new flashcard deck"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO flashcard_decks (name, description, creator_user_id, category, is_public)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (name, description, user_id, category, is_public))
+                deck_id = cursor.lastrowid
+                conn.commit()
+                logger.info(f"✅ Created deck '{name}' with ID {deck_id} for user {user_id}")
+                return deck_id
+        except Exception as e:
+            logger.error(f"🔥 Failed to create deck: {e}")
+            return None
+    
+    def create_flashcard(self, deck_id: int, front_text: str, back_text: str, tags: str = "", difficulty: int = 1) -> int:
+        """Create a new flashcard"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO flashcards (deck_id, front_text, back_text, tags, difficulty)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (deck_id, front_text, back_text, tags, difficulty))
+                card_id = cursor.lastrowid
+                
+                # Update deck card count
+                cursor.execute('''
+                    UPDATE flashcard_decks 
+                    SET card_count = card_count + 1, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (deck_id,))
+                
+                conn.commit()
+                logger.info(f"✅ Created flashcard {card_id} in deck {deck_id}")
+                return card_id
+        except Exception as e:
+            logger.error(f"🔥 Failed to create flashcard: {e}")
+            return None
+    
+    def get_user_decks(self, user_id: int) -> List[Tuple]:
+        """Get all decks for a user (created + subscribed)"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT DISTINCT d.id, d.name, d.description, d.category, d.card_count, 
+                           d.creator_user_id, d.created_at,
+                           CASE WHEN d.creator_user_id = ? THEN 'owned' ELSE 'subscribed' END as relation
+                    FROM flashcard_decks d
+                    LEFT JOIN user_deck_subscriptions s ON d.id = s.deck_id AND s.user_id = ? AND s.is_active = 1
+                    WHERE d.creator_user_id = ? OR s.user_id = ?
+                    ORDER BY d.updated_at DESC
+                ''', (user_id, user_id, user_id, user_id))
+                decks = cursor.fetchall()
+                logger.info(f"✅ Retrieved {len(decks)} decks for user {user_id}")
+                return decks
+        except Exception as e:
+            logger.error(f"🔥 Failed to get user decks: {e}")
+            return []
+    
+    def get_due_cards(self, user_id: int, limit: int = 20) -> List[Tuple]:
+        """Get cards due for review using spaced repetition"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT c.id, c.deck_id, c.front_text, c.back_text, c.tags, c.difficulty,
+                           p.ease_factor, p.interval_days, p.review_count, p.streak_count,
+                           d.name as deck_name
+                    FROM flashcards c
+                    JOIN user_card_progress p ON c.id = p.card_id
+                    JOIN flashcard_decks d ON c.deck_id = d.id
+                    WHERE p.user_id = ? AND p.due_date <= DATE('now')
+                    ORDER BY p.due_date ASC, p.ease_factor ASC
+                    LIMIT ?
+                ''', (user_id, limit))
+                cards = cursor.fetchall()
+                logger.info(f"✅ Retrieved {len(cards)} due cards for user {user_id}")
+                return cards
+        except Exception as e:
+            logger.error(f"🔥 Failed to get due cards: {e}")
+            return []
+    
+    def get_new_cards(self, user_id: int, limit: int = 10) -> List[Tuple]:
+        """Get new cards that haven't been studied yet"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT c.id, c.deck_id, c.front_text, c.back_text, c.tags, c.difficulty,
+                           d.name as deck_name
+                    FROM flashcards c
+                    JOIN flashcard_decks d ON c.deck_id = d.id
+                    LEFT JOIN user_card_progress p ON c.id = p.card_id AND p.user_id = ?
+                    WHERE p.id IS NULL AND (
+                        d.creator_user_id = ? OR 
+                        EXISTS (SELECT 1 FROM user_deck_subscriptions s 
+                               WHERE s.user_id = ? AND s.deck_id = d.id AND s.is_active = 1)
+                    )
+                    ORDER BY c.created_at ASC
+                    LIMIT ?
+                ''', (user_id, user_id, user_id, limit))
+                cards = cursor.fetchall()
+                logger.info(f"✅ Retrieved {len(cards)} new cards for user {user_id}")
+                return cards
+        except Exception as e:
+            logger.error(f"🔥 Failed to get new cards: {e}")
+            return []
+    
+    def calculate_sm2_algorithm(self, ease_factor: float, interval: int, rating: int) -> Tuple[float, int]:
+        """SM-2 Algorithm implementation
+        Rating: 1=Again, 2=Hard, 3=Good, 4=Easy
+        Returns: (new_ease_factor, new_interval)
+        """
+        from datetime import timedelta
+        
+        if rating < 3:  # Again or Hard
+            new_interval = 1
+            new_ease_factor = max(1.3, ease_factor - 0.2)
+        else:
+            if interval == 1:
+                new_interval = 6
+            elif interval == 6:
+                new_interval = int(interval * ease_factor)
+            else:
+                new_interval = int(interval * ease_factor)
+            
+            # Adjust ease factor based on rating
+            new_ease_factor = ease_factor + (0.1 - (5 - rating) * (0.08 + (5 - rating) * 0.02))
+            new_ease_factor = max(1.3, new_ease_factor)  # Minimum ease factor
+        
+        return new_ease_factor, new_interval
+    
+    def review_card(self, user_id: int, card_id: int, rating: int, time_spent: int = 0) -> bool:
+        """Record card review and update spaced repetition data"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Get current progress or create new
+                cursor.execute('''
+                    SELECT ease_factor, interval_days, review_count, streak_count
+                    FROM user_card_progress
+                    WHERE user_id = ? AND card_id = ?
+                ''', (user_id, card_id))
+                
+                progress = cursor.fetchone()
+                
+                if progress:
+                    ease_factor, interval_days, review_count, streak_count = progress
+                else:
+                    # New card
+                    ease_factor, interval_days, review_count, streak_count = 2.5, 1, 0, 0
+                
+                # Calculate new values using SM-2
+                new_ease_factor, new_interval = self.calculate_sm2_algorithm(ease_factor, interval_days, rating)
+                
+                # Update streak
+                if rating >= 3:  # Good or Easy
+                    new_streak = streak_count + 1
+                else:
+                    new_streak = 0
+                
+                from datetime import datetime, timedelta
+                due_date = (datetime.now() + timedelta(days=new_interval)).date()
+                
+                # Insert or update progress
+                cursor.execute('''
+                    INSERT OR REPLACE INTO user_card_progress 
+                    (user_id, card_id, ease_factor, interval_days, due_date, 
+                     review_count, streak_count, last_reviewed, last_rating, total_time_spent)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, ?, 
+                           COALESCE((SELECT total_time_spent FROM user_card_progress 
+                                   WHERE user_id = ? AND card_id = ?), 0) + ?)
+                ''', (user_id, card_id, new_ease_factor, new_interval, due_date,
+                      review_count + 1, new_streak, rating, user_id, card_id, time_spent))
+                
+                conn.commit()
+                logger.info(f"✅ Updated card {card_id} progress for user {user_id} (rating: {rating}, new interval: {new_interval})")
+                return True
+                
+        except Exception as e:
+            logger.error(f"🔥 Failed to review card: {e}")
+            return False
+    
+    def get_study_stats(self, user_id: int) -> dict:
+        """Get comprehensive study statistics for user"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Get or create user stats
+                cursor.execute('SELECT * FROM user_learning_stats WHERE user_id = ?', (user_id,))
+                stats = cursor.fetchone()
+                
+                if not stats:
+                    # Create default stats
+                    cursor.execute('''
+                        INSERT INTO user_learning_stats (user_id) VALUES (?)
+                    ''', (user_id,))
+                    conn.commit()
+                    stats = (user_id, 0, 0, 0, 0, 0, None, 1, 0, None, None)
+                
+                # Get current due cards count
+                cursor.execute('''
+                    SELECT COUNT(*) FROM user_card_progress 
+                    WHERE user_id = ? AND due_date <= DATE('now')
+                ''', (user_id,))
+                due_cards = cursor.fetchone()[0]
+                
+                # Get total cards available
+                cursor.execute('''
+                    SELECT COUNT(*) FROM flashcards c
+                    JOIN flashcard_decks d ON c.deck_id = d.id
+                    WHERE d.creator_user_id = ? OR EXISTS (
+                        SELECT 1 FROM user_deck_subscriptions s 
+                        WHERE s.user_id = ? AND s.deck_id = d.id AND s.is_active = 1
+                    )
+                ''', (user_id, user_id))
+                total_cards = cursor.fetchone()[0]
+                
+                return {
+                    'user_id': stats[0],
+                    'total_cards_studied': stats[1],
+                    'total_study_time': stats[2],
+                    'current_streak': stats[3],
+                    'longest_streak': stats[4],
+                    'cards_due_today': due_cards,
+                    'last_study_date': stats[6],
+                    'level': stats[7],
+                    'experience_points': stats[8],
+                    'total_cards_available': total_cards
+                }
+                
+        except Exception as e:
+            logger.error(f"🔥 Failed to get study stats: {e}")
+            return {}
 
 # Global database instance
 db = DatabaseManager()

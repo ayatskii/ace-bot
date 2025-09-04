@@ -666,3 +666,113 @@ def add_custom_word_to_dictionary(word: str, definition: str = None, translation
     """
     
     return generate_text(prompt)
+
+# === FLASHCARD GENERATION FUNCTIONS ===
+
+def generate_flashcard_from_topic(topic: str, difficulty: str = "IELTS Band 7-9", card_type: str = "vocabulary") -> dict:
+    """Generate a flashcard for a specific topic and difficulty"""
+    
+    if card_type == "vocabulary":
+        prompt = f"""
+        Create a vocabulary flashcard for {topic} at {difficulty} level.
+        
+        Generate a word that is:
+        - Relevant to {topic}
+        - Appropriate for {difficulty} students
+        - Useful for IELTS exam preparation
+        
+        Format your response exactly as:
+        
+        FRONT: [English word or phrase]
+        BACK: [Definition in English]
+        TRANSLATION: [Russian translation]
+        EXAMPLE: [Example sentence using the word]
+        TAGS: {topic}, {difficulty}, vocabulary
+        DIFFICULTY: [1-5 scale where 1=easy, 5=very hard]
+        """
+    
+    elif card_type == "grammar":
+        prompt = f"""
+        Create a grammar flashcard for {topic} at {difficulty} level.
+        
+        Format your response exactly as:
+        
+        FRONT: [Grammar rule or question about {topic}]
+        BACK: [Explanation with example]
+        TRANSLATION: [Russian explanation if needed]
+        EXAMPLE: [Example sentences showing correct usage]
+        TAGS: {topic}, {difficulty}, grammar
+        DIFFICULTY: [1-5 scale where 1=easy, 5=very hard]
+        """
+    
+    elif card_type == "speaking":
+        prompt = f"""
+        Create a speaking practice flashcard for {topic} at {difficulty} level.
+        
+        Format your response exactly as:
+        
+        FRONT: [Speaking question about {topic}]
+        BACK: [Sample answer with key vocabulary and structures]
+        TRANSLATION: [Key Russian vocabulary if needed]
+        EXAMPLE: [Additional phrases for this topic]
+        TAGS: {topic}, {difficulty}, speaking
+        DIFFICULTY: [1-5 scale where 1=easy, 5=very hard]
+        """
+    
+    try:
+        response = generate_text_with_retry(prompt)
+        return parse_flashcard_response(response)
+    except Exception as e:
+        logger.error(f"🔥 Failed to generate flashcard: {e}")
+        return {
+            'front': f"Study {topic}",
+            'back': f"Learn more about {topic} for {difficulty}",
+            'translation': "",
+            'example': "",
+            'tags': f"{topic}, {difficulty}",
+            'difficulty': 3
+        }
+
+def parse_flashcard_response(response: str) -> dict:
+    """Parse AI response into flashcard components"""
+    try:
+        lines = response.strip().split('\n')
+        flashcard = {
+            'front': '',
+            'back': '',
+            'translation': '',
+            'example': '',
+            'tags': '',
+            'difficulty': 3
+        }
+        
+        for line in lines:
+            line = line.strip()
+            if line.startswith('FRONT:'):
+                flashcard['front'] = line.replace('FRONT:', '').strip()
+            elif line.startswith('BACK:'):
+                flashcard['back'] = line.replace('BACK:', '').strip()
+            elif line.startswith('TRANSLATION:'):
+                flashcard['translation'] = line.replace('TRANSLATION:', '').strip()
+            elif line.startswith('EXAMPLE:'):
+                flashcard['example'] = line.replace('EXAMPLE:', '').strip()
+            elif line.startswith('TAGS:'):
+                flashcard['tags'] = line.replace('TAGS:', '').strip()
+            elif line.startswith('DIFFICULTY:'):
+                try:
+                    diff_text = line.replace('DIFFICULTY:', '').strip()
+                    flashcard['difficulty'] = int(diff_text[0]) if diff_text[0].isdigit() else 3
+                except:
+                    flashcard['difficulty'] = 3
+        
+        return flashcard
+    except Exception as e:
+        logger.error(f"🔥 Failed to parse flashcard response: {e}")
+        return {
+            'front': 'Error generating card',
+            'back': 'Please try again',
+            'translation': '',
+            'example': '',
+            'tags': '',
+            'difficulty': 3
+        }

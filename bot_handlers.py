@@ -22,6 +22,15 @@ FULL_SIM_PART_1 = 1
 FULL_SIM_PART_2 = 2
 FULL_SIM_PART_3 = 3
 
+# Flashcard conversation states
+FLASHCARD_DECK_NAME = 10
+FLASHCARD_DECK_DESCRIPTION = 11
+FLASHCARD_ADD_FRONT = 12
+FLASHCARD_ADD_BACK = 13
+FLASHCARD_ADD_TAGS = 14
+FLASHCARD_STUDY_SESSION = 15
+FLASHCARD_REVIEW_RATING = 16
+
 # --- Group Chat Utility Functions ---
 def is_group_chat(update: Update) -> bool:
     """Check if message comes from a group chat"""
@@ -821,6 +830,7 @@ async def setup_bot_menu_button(context: CallbackContext) -> None:
             BotCommand("start", "Start the bot and get welcome message"),
             BotCommand("menu", "Open the interactive main menu"),
             BotCommand("help", "Show help information"),
+            BotCommand("flashcards", "Study with spaced repetition flashcards"),
             BotCommand("vocabulary", "Get vocabulary words"),
             BotCommand("writing", "Get IELTS writing tasks"),
             BotCommand("speaking", "Get IELTS speaking questions"),
@@ -889,6 +899,7 @@ async def menu_command(update: Update, context: CallbackContext, force_new_messa
     
     keyboard = [
         [InlineKeyboardButton("🧠 Словарь", callback_data="menu_vocabulary")],
+        [InlineKeyboardButton("🎓 Flashcards", callback_data="flashcard_menu")],
         [InlineKeyboardButton("✍️ Письмо", callback_data="menu_writing")],
         [InlineKeyboardButton("🗣️ Говорение", callback_data="menu_speaking")],
         [InlineKeyboardButton("ℹ️ Информация", callback_data="menu_info")],
@@ -1099,6 +1110,7 @@ async def menu_button_callback(update: Update, context: CallbackContext) -> None
         # Handle back to main menu
         keyboard = [
             [InlineKeyboardButton("🧠 Словарь", callback_data="menu_vocabulary")],
+            [InlineKeyboardButton("🎓 Flashcards", callback_data="flashcard_menu")],
             [InlineKeyboardButton("✍️ Письмо", callback_data="menu_writing")],
             [InlineKeyboardButton("🗣️ Говорение", callback_data="menu_speaking")],
             [InlineKeyboardButton("ℹ️ Информация", callback_data="menu_info")],
@@ -1129,6 +1141,7 @@ async def handle_start_buttons(update: Update, context: CallbackContext) -> None
         # Create and send the main menu directly
         keyboard = [
             [InlineKeyboardButton("🧠 Словарь", callback_data="menu_vocabulary")],
+            [InlineKeyboardButton("🎓 Flashcards", callback_data="flashcard_menu")],
             [InlineKeyboardButton("✍️ Письмо", callback_data="menu_writing")],
             [InlineKeyboardButton("🗣️ Говорение", callback_data="menu_speaking")],
             [InlineKeyboardButton("ℹ️ Информация", callback_data="menu_info")],

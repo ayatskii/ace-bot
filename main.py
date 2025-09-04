@@ -4,6 +4,7 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Mess
 import logging
 import config
 import bot_handlers
+import flashcard_handlers
 from gemini_api import initialize_gemini
 
 # Configure logging
@@ -29,6 +30,7 @@ def main():
     application.add_handler(bot_handlers.grammar_conversation_handler)
     application.add_handler(bot_handlers.vocabulary_conversation_handler)
     application.add_handler(bot_handlers.full_speaking_simulation_handler)
+    application.add_handler(flashcard_handlers.flashcard_conversation_handler)
     logger.info("✅ Conversation handlers registered.")
 
     # --- Standard Command Handlers ---
@@ -38,6 +40,7 @@ def main():
     application.add_handler(CommandHandler("speaking", bot_handlers.handle_speaking_command))
     application.add_handler(CommandHandler("info", bot_handlers.handle_info_command))
     application.add_handler(CommandHandler("debug", bot_handlers.debug_conversation_state))  # Debug command
+    application.add_handler(CommandHandler("flashcards", flashcard_handlers.handle_flashcard_menu))  # Flashcard command
     
     # --- Group Chat Command Handlers ---
     application.add_handler(CommandHandler("word", bot_handlers.handle_group_word_command))
@@ -105,6 +108,9 @@ def main():
     application.add_handler(CallbackQueryHandler(bot_handlers.skip_full_sim_part, pattern=r'^skip_part_\d$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_speaking_stats, pattern=r'^speaking_stats$'))
     application.add_handler(CallbackQueryHandler(bot_handlers.handle_writing_stats, pattern=r'^writing_stats$'))
+    
+    # Add flashcard callback handlers
+    application.add_handler(CallbackQueryHandler(flashcard_handlers.handle_flashcard_menu, pattern=r'^flashcard_menu$'))
     
     logger.info("✅ Callback query handlers registered.")
 
