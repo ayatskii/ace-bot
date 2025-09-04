@@ -39,6 +39,13 @@ def main():
     application.add_handler(CommandHandler("info", bot_handlers.handle_info_command))
     application.add_handler(CommandHandler("debug", bot_handlers.debug_conversation_state))  # Debug command
     
+    # --- Group Chat Command Handlers ---
+    application.add_handler(CommandHandler("word", bot_handlers.handle_group_word_command))
+    application.add_handler(CommandHandler("groupstats", bot_handlers.handle_group_stats_command))
+    application.add_handler(CommandHandler("resetgroup", bot_handlers.handle_group_reset_command))
+    application.add_handler(CommandHandler("grouphistory", bot_handlers.handle_group_history_command))
+    application.add_handler(CommandHandler("autosend", bot_handlers.handle_group_autosend_command))
+    
     # --- Admin Command Handlers ---
     application.add_handler(CommandHandler("admin", bot_handlers.admin_command))
     application.add_handler(CommandHandler("adminhelp", bot_handlers.admin_help_command))
@@ -103,6 +110,28 @@ def main():
 
     # --- Error Handler ---
     application.add_error_handler(bot_handlers.error_handler)
+
+    # --- Setup Auto-Send Job Scheduler ---
+    if config.ENABLE_GROUP_FEATURES and config.ENABLE_AUTO_SEND:
+        job_queue = application.job_queue
+        
+        # Run auto-send check every hour (configurable)
+        job_queue.run_repeating(
+            bot_handlers.auto_send_words_to_groups,
+            interval=config.AUTO_SEND_CHECK_INTERVAL,
+            first=60,  # Start after 1 minute
+            name="auto_send_words"
+        )
+        
+        # Run at specific time daily (configurable)
+        from datetime import time
+        job_queue.run_daily(
+            bot_handlers.auto_send_words_to_groups,
+            time=time(hour=config.DAILY_SEND_TIME_HOUR, minute=config.DAILY_SEND_TIME_MINUTE),
+            name="daily_word_send"
+        )
+        
+        logger.info(f"✅ Auto-send job scheduler initialized (checks every {config.AUTO_SEND_CHECK_INTERVAL}s, daily at {config.DAILY_SEND_TIME_HOUR}:{config.DAILY_SEND_TIME_MINUTE:02d})")
 
     # Run the bot
     logger.info("Bot started polling...")

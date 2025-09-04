@@ -145,11 +145,53 @@ class DatabaseManager:
                     )
                 ''')
                 
+                # Create group chats table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS group_chats (
+                        group_id INTEGER PRIMARY KEY,
+                        group_title TEXT,
+                        group_type TEXT,
+                        is_active BOOLEAN DEFAULT 1,
+                        added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
+                # Create group sent words table (for uniqueness tracking)
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS group_sent_words (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        group_id INTEGER NOT NULL,
+                        word TEXT NOT NULL,
+                        definition TEXT,
+                        translation TEXT,
+                        example TEXT,
+                        sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        sent_by_user_id INTEGER,
+                        FOREIGN KEY (group_id) REFERENCES group_chats (group_id),
+                        UNIQUE(group_id, word)
+                    )
+                ''')
+                
+                # Create group settings table
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS group_settings (
+                        group_id INTEGER PRIMARY KEY,
+                        auto_send_enabled BOOLEAN DEFAULT 0,
+                        send_interval_hours INTEGER DEFAULT 24,
+                        word_difficulty TEXT DEFAULT 'IELTS Band 7-9 (C1/C2)',
+                        last_auto_send TIMESTAMP,
+                        FOREIGN KEY (group_id) REFERENCES group_chats (group_id)
+                    )
+                ''')
+                
                 # Create indexes for better performance
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_sessions ON speaking_simulations (user_id, started_at)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_session_status ON speaking_simulations (status)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_simulation_parts ON speaking_part_responses (simulation_id, part_number)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_writing_evaluations ON writing_evaluations (user_id, evaluated_at)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_group_sent_words ON group_sent_words (group_id, sent_at)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_group_activity ON group_chats (last_activity)')
                 
                 conn.commit()
                 logger.info("✅ Database initialized successfully")
@@ -1068,6 +1110,246 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"🔥 Failed to recalculate writing stats for user {user_id}: {e}")
             return False
+
+    # === GROUP CHAT FUNCTIONS ===
+    
+    def add_group_chat(self, group_id: int, group_title: str, group_type: str) -> bool:
+        """Add or update group chat information"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO group_chats 
+                    (group_id, group_title, group_type, last_activity)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (group_id, group_title, group_type))
+                conn.commit()
+                logger.info(f"✅ Group {group_id} ({group_title}) added/updated in database")
+                return True
+        except Exception as e:
+            logger.error(f"🔥 Failed to add group {group_id}: {e}")
+            return False
+    
+    def get_group_sent_words(self, group_id: int, limit: int = 100) -> List[Tuple]:
+        """Get words sent to a specific group"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT word, definition, translation, example, sent_at, sent_by_user_id
+                    FROM group_sent_words 
+                    WHERE group_id = ? 
+                    ORDER BY sent_at DESC 
+                    LIMIT ?
+                ''', (group_id, limit))
+                words = cursor.fetchall()
+                logger.info(f"✅ Retrieved {len(words)} sent words for group {group_id}")
+                return words
+        except Exception as e:
+            logger.error(f"🔥 Failed to get sent words for group {group_id}: {e}")
+            return []
+    
+    def is_word_sent_to_group(self, group_id: int, word: str) -> bool:
+        """Check if a word has already been sent to a specific group"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT 1 FROM group_sent_words 
+                    WHERE group_id = ? AND LOWER(word) = LOWER(?)
+                ''', (group_id, word.strip()))
+                return cursor.fetchone() is not None
+        except Exception as e:
+            logger.error(f"🔥 Failed to check word existence for group {group_id}: {e}")
+            return False
+    
+    def save_word_to_group(self, group_id: int, word: str, definition: str, 
+                          translation: str, example: str, sent_by_user_id: int) -> bool:
+        """Save a word as sent to a specific group"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO group_sent_words 
+                    (group_id, word, definition, translation, example, sent_by_user_id, sent_at)
+                    VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (group_id, word.strip().lower(), definition, translation, example, sent_by_user_id))
+                
+                # Update group last activity
+                cursor.execute('''
+                    UPDATE group_chats 
+                    SET last_activity = CURRENT_TIMESTAMP 
+                    WHERE group_id = ?
+                ''', (group_id,))
+                
+                conn.commit()
+                logger.info(f"✅ Word '{word}' saved to group {group_id}")
+                return True
+        except Exception as e:
+            logger.error(f"🔥 Failed to save word '{word}' to group {group_id}: {e}")
+            return False
+    
+    def get_group_settings(self, group_id: int) -> dict:
+        """Get settings for a specific group"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT auto_send_enabled, send_interval_hours, word_difficulty, last_auto_send
+                    FROM group_settings 
+                    WHERE group_id = ?
+                ''', (group_id,))
+                result = cursor.fetchone()
+                
+                if result:
+                    return {
+                        'auto_send_enabled': bool(result[0]),
+                        'send_interval_hours': result[1],
+                        'word_difficulty': result[2],
+                        'last_auto_send': result[3]
+                    }
+                else:
+                    # Return default settings if not found
+                    return {
+                        'auto_send_enabled': False,
+                        'send_interval_hours': 24,
+                        'word_difficulty': 'IELTS Band 7-9 (C1/C2)',
+                        'last_auto_send': None
+                    }
+        except Exception as e:
+            logger.error(f"🔥 Failed to get settings for group {group_id}: {e}")
+            return {}
+    
+    def update_group_settings(self, group_id: int, **settings) -> bool:
+        """Update settings for a specific group"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # Insert or update settings
+                cursor.execute('''
+                    INSERT OR REPLACE INTO group_settings 
+                    (group_id, auto_send_enabled, send_interval_hours, word_difficulty, last_auto_send)
+                    VALUES (?, ?, ?, ?, ?)
+                ''', (
+                    group_id,
+                    settings.get('auto_send_enabled', False),
+                    settings.get('send_interval_hours', 24),
+                    settings.get('word_difficulty', 'IELTS Band 7-9 (C1/C2)'),
+                    settings.get('last_auto_send', None)
+                ))
+                
+                conn.commit()
+                logger.info(f"✅ Settings updated for group {group_id}")
+                return True
+        except Exception as e:
+            logger.error(f"🔥 Failed to update settings for group {group_id}: {e}")
+            return False
+    
+    def get_group_stats(self, group_id: int = None) -> dict:
+        """Get statistics for groups"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                if group_id:
+                    # Stats for specific group
+                    cursor.execute('SELECT COUNT(*) FROM group_sent_words WHERE group_id = ?', (group_id,))
+                    word_count = cursor.fetchone()[0]
+                    
+                    cursor.execute('''
+                        SELECT group_title, group_type, added_at, last_activity
+                        FROM group_chats WHERE group_id = ?
+                    ''', (group_id,))
+                    group_info = cursor.fetchone()
+                    
+                    return {
+                        'group_id': group_id,
+                        'word_count': word_count,
+                        'group_title': group_info[0] if group_info else 'Unknown',
+                        'group_type': group_info[1] if group_info else 'Unknown',
+                        'added_at': group_info[2] if group_info else None,
+                        'last_activity': group_info[3] if group_info else None
+                    }
+                else:
+                    # Global stats
+                    cursor.execute('SELECT COUNT(*) FROM group_chats WHERE is_active = 1')
+                    total_groups = cursor.fetchone()[0]
+                    
+                    cursor.execute('SELECT COUNT(*) FROM group_sent_words')
+                    total_words_sent = cursor.fetchone()[0]
+                    
+                    cursor.execute('SELECT COUNT(DISTINCT group_id) FROM group_sent_words')
+                    active_groups = cursor.fetchone()[0]
+                    
+                    return {
+                        'total_groups': total_groups,
+                        'total_words_sent': total_words_sent,
+                        'active_groups': active_groups
+                    }
+        except Exception as e:
+            logger.error(f"🔥 Failed to get group stats: {e}")
+            return {}
+    
+    def get_all_groups(self, limit: int = 50) -> List[Tuple]:
+        """Get all groups (admin only)"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT gc.group_id, gc.group_title, gc.group_type, gc.added_at, gc.last_activity,
+                           COUNT(gsw.id) as word_count
+                    FROM group_chats gc
+                    LEFT JOIN group_sent_words gsw ON gc.group_id = gsw.group_id
+                    WHERE gc.is_active = 1
+                    GROUP BY gc.group_id
+                    ORDER BY gc.last_activity DESC
+                    LIMIT ?
+                ''', (limit,))
+                groups = cursor.fetchall()
+                logger.info(f"✅ Retrieved {len(groups)} groups")
+                return groups
+        except Exception as e:
+            logger.error(f"🔥 Failed to get all groups: {e}")
+            return []
+    
+    def clear_group_words(self, group_id: int) -> bool:
+        """Clear all words sent to a specific group (admin only)"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('DELETE FROM group_sent_words WHERE group_id = ?', (group_id,))
+                deleted_count = cursor.rowcount
+                conn.commit()
+                
+                if deleted_count > 0:
+                    logger.info(f"✅ Cleared {deleted_count} words from group {group_id}")
+                    return True
+                else:
+                    logger.warning(f"⚠️ No words found to clear for group {group_id}")
+                    return False
+        except Exception as e:
+            logger.error(f"🔥 Failed to clear words for group {group_id}: {e}")
+            return False
+    
+    def get_groups_with_auto_send(self) -> List[Tuple]:
+        """Get all groups with auto-send enabled"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT gc.group_id, gc.group_title, gs.last_auto_send, gs.send_interval_hours
+                    FROM group_chats gc
+                    JOIN group_settings gs ON gc.group_id = gs.group_id
+                    WHERE gc.is_active = 1 AND gs.auto_send_enabled = 1
+                    ORDER BY gc.last_activity DESC
+                ''')
+                groups = cursor.fetchall()
+                logger.info(f"✅ Retrieved {len(groups)} groups with auto-send enabled")
+                return groups
+        except Exception as e:
+            logger.error(f"🔥 Failed to get groups with auto-send: {e}")
+            return []
 
 # Global database instance
 db = DatabaseManager()

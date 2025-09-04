@@ -22,6 +22,54 @@ FULL_SIM_PART_1 = 1
 FULL_SIM_PART_2 = 2
 FULL_SIM_PART_3 = 3
 
+# --- Group Chat Utility Functions ---
+def is_group_chat(update: Update) -> bool:
+    """Check if message comes from a group chat"""
+    return update.effective_chat.type in ['group', 'supergroup']
+
+def get_group_info(update: Update) -> dict:
+    """Extract group information from update"""
+    chat = update.effective_chat
+    return {
+        'group_id': chat.id,
+        'group_title': chat.title or 'Unknown Group',
+        'group_type': chat.type
+    }
+
+def extract_word_components(word_details: str) -> tuple:
+    """Extract word, definition, translation, example from formatted text"""
+    import re
+    
+    try:
+        word_match = re.search(r'📝 Word: (.+)', word_details)
+        definition_match = re.search(r'📖 Definition: (.+)', word_details)
+        translation_match = re.search(r'🇷🇺 Translation: (.+)', word_details)
+        example_match = re.search(r'💡 Example: (.+)', word_details)
+        
+        word = word_match.group(1).strip() if word_match else "Unknown"
+        definition = definition_match.group(1).strip() if definition_match else ""
+        translation = translation_match.group(1).strip() if translation_match else ""
+        example = example_match.group(1).strip() if example_match else ""
+        
+        return (word, definition, translation, example)
+    except Exception as e:
+        logger.error(f"🔥 Failed to extract word components: {e}")
+        return ("Unknown", "", "", "")
+
+def get_random_word_for_group(group_id: int, max_attempts: int = 20) -> str:
+    """Generate a random word that hasn't been sent to this group yet"""
+    for attempt in range(max_attempts):
+        word_details = get_random_word_details()
+        word, _, _, _ = extract_word_components(word_details)
+        
+        if not db.is_word_sent_to_group(group_id, word):
+            logger.info(f"✅ Generated unique word '{word}' for group {group_id} (attempt {attempt + 1})")
+            return word_details
+    
+    # If all attempts failed, return a word anyway (fallback)
+    logger.warning(f"⚠️ Could not find unique word for group {group_id} after {max_attempts} attempts, using fallback")
+    return get_random_word_details()
+
 # --- Admin Utility Functions ---
 def is_admin(user_id: int) -> bool:
     """Check if user is an admin"""
@@ -344,6 +392,86 @@ def generate_detailed_analysis(part_scores: dict, part_transcriptions: dict,
         analysis += f"<b>Часть {part_num}:</b> {score}/9\n"
         analysis += f"<i>Ответ: {transcription[:100]}{'...' if len(transcription) > 100 else ''}</i>\n"
         analysis += f"<i>Оценка: {evaluation[:200]}{'...' if len(evaluation) > 200 else ''}</i>\n\n"
+    
+    return analysis
+
+def generate_detailed_analysis_with_questions(part_scores: dict, question_transcriptions: dict, 
+                                            question_evaluations: dict, overall_criteria: dict, user_data: dict) -> str:
+    """Generate detailed analysis with question-by-question breakdown"""
+    
+    analysis = "📊 <b>ДЕТАЛЬНЫЙ АНАЛИЗ ПО КРИТЕРИЯМ IELTS</b>\n\n"
+    
+    # Overall performance summary
+    total_score = sum(part_scores.values())
+    avg_score = total_score / len(part_scores) if part_scores else 0
+    
+    analysis += f"🏆 <b>ОБЩАЯ ПРОИЗВОДИТЕЛЬНОСТЬ</b>\n"
+    analysis += f"• Средний балл: {avg_score:.1f}/9\n"
+    analysis += f"• Общий балл: {total_score:.1f}/27\n\n"
+    
+    # Official IELTS criteria analysis
+    analysis += "📋 <b>ОФИЦИАЛЬНЫЕ КРИТЕРИИ IELTS SPEAKING</b>\n\n"
+    
+    # 1. Fluency and Coherence
+    fluency_score = overall_criteria.get('fluency', 0)
+    analysis += f"🎯 <b>1. Fluency and Coherence (Беглость и связность): {fluency_score:.1f}/9</b>\n"
+    analysis += get_fluency_feedback(fluency_score)
+    analysis += "\n"
+    
+    # 2. Lexical Resource
+    vocab_score = overall_criteria.get('vocabulary', 0)
+    analysis += f"📚 <b>2. Lexical Resource (Лексический запас): {vocab_score:.1f}/9</b>\n"
+    analysis += get_vocabulary_feedback(vocab_score)
+    analysis += "\n"
+    
+    # 3. Grammatical Range and Accuracy
+    grammar_score = overall_criteria.get('grammar', 0)
+    analysis += f"🔤 <b>3. Grammatical Range and Accuracy (Грамматика): {grammar_score:.1f}/9</b>\n"
+    analysis += get_grammar_feedback(grammar_score)
+    analysis += "\n"
+    
+    # 4. Pronunciation
+    pron_score = overall_criteria.get('pronunciation', 0)
+    analysis += f"🎤 <b>4. Pronunciation (Произношение): {pron_score:.1f}/9</b>\n"
+    analysis += get_pronunciation_feedback(pron_score)
+    analysis += "\n"
+    
+    # Part-by-part analysis with question breakdown
+    analysis += "📝 <b>ПОДРОБНЫЙ АНАЛИЗ ПО ЧАСТЯМ И ВОПРОСАМ</b>\n\n"
+    
+    part_names = {1: "Короткие вопросы", 2: "Карточка-монолог", 3: "Дискуссия"}
+    total_questions_per_part = user_data.get('total_questions_per_part', {1: 3, 2: 1, 3: 3})
+    question_scores = user_data.get('question_scores', {})
+    
+    for part_num in sorted(part_scores.keys()):
+        part_score = part_scores[part_num]
+        part_name = part_names.get(part_num, f"Часть {part_num}")
+        total_questions = total_questions_per_part.get(part_num, 1)
+        
+        analysis += f"🎯 <b>Часть {part_num}: {part_name}</b>\n"
+        analysis += f"<b>Средний результат части:</b> {part_score:.1f}/9\n\n"
+        
+        # Show individual questions within this part
+        for q in range(1, total_questions + 1):
+            question_key = f"part_{part_num}_q_{q}"
+            q_score = question_scores.get(question_key, 0)
+            q_transcription = question_transcriptions.get(question_key, "Недоступно")
+            q_evaluation = question_evaluations.get(question_key, "Недоступно")
+            
+            analysis += f"<b>   🔹 Вопрос {q}:</b> {q_score:.1f}/9\n"
+            
+            # Show part of transcription
+            if q_transcription != "Недоступно":
+                analysis += f"   <b>Ваш ответ:</b>\n"
+                analysis += f"   <i>«{q_transcription[:150]}{'...' if len(q_transcription) > 150 else ''}»</i>\n\n"
+            
+            # Show evaluation summary for this question
+            if q_evaluation != "Недоступно":
+                # Show a truncated version of the evaluation (first 100 characters)
+                eval_summary = q_evaluation[:100] + "..." if len(q_evaluation) > 100 else q_evaluation
+                analysis += f"   <b>Краткая оценка:</b>\n   <i>{eval_summary}</i>\n\n"
+            
+        analysis += "─────────────────\n\n"
     
     return analysis
 
@@ -2479,31 +2607,39 @@ async def start_full_speaking_simulation(update: Update, context: CallbackContex
             )
             return ConversationHandler.END
         
-        # Initialize simulation context
+        # Initialize simulation context with question-based structure
         import time
         context.user_data.update({
             'full_simulation_mode': True,
             'simulation_session_id': session_id,
             'simulation_start_time': time.time(),
             'current_part': 1,
-            'part_scores': {},
-            'part_transcriptions': {},
-            'part_evaluations': {},
+            'current_question_in_part': 1,
+            'total_questions_per_part': {1: 3, 2: 1, 3: 3},  # Part 1: 3 questions, Part 2: 1 cue card, Part 3: 3 questions
+            'question_scores': {},  # Store scores for each question
+            'question_transcriptions': {},  # Store transcriptions for each question
+            'question_evaluations': {},  # Store evaluations for each question
+            'part_scores': {},  # Final part scores (average of questions)
             'user_id': user.id
         })
         
-        # Generate Part 1 question
+        # Generate first question of Part 1
         speaking_prompt = generate_speaking_question(part="Part 1")
         context.user_data['current_speaking_prompt'] = speaking_prompt
+        
+        # Create question key for storage
+        question_key = f"part_{1}_q_{1}"
+        context.user_data['current_question_key'] = question_key
         
         # Show Part 1 instructions
         instructions = (
             f"🎯 <b>ПОЛНАЯ СИМУЛЯЦИЯ IELTS SPEAKING</b>\n\n"
-            f"📋 <b>Часть 1 из 3: Короткие вопросы</b>\n\n"
+            f"📋 <b>Часть 1 из 3: Короткие вопросы</b>\n"
+            f"❓ <b>Вопрос 1 из 3</b>\n\n"
             f"{speaking_prompt}\n\n"
             f"🎤 <b>Запишите голосовой ответ</b>\n"
             f"⏱️ <b>Рекомендуемое время:</b> 30-60 секунд\n\n"
-            f"<i>💡 <b>Важно:</b> Оценки по частям не показываются до завершения всей симуляции.\n"
+            f"<i>💡 <b>Важно:</b> Оценки по вопросам не показываются до завершения всей симуляции.\n"
             f"В конце вы получите детальный анализ по всем критериям IELTS.</i>"
         )
         
@@ -2545,7 +2681,7 @@ async def handle_full_sim_part_3(update: Update, context: CallbackContext) -> in
 
 async def handle_full_sim_part_response(update: Update, context: CallbackContext, 
                                       part_number: int, next_state: int) -> int:
-    """Generic handler for all part responses"""
+    """Generic handler for individual question responses within parts"""
     user = update.effective_user
     
     try:
@@ -2554,8 +2690,11 @@ async def handle_full_sim_part_response(update: Update, context: CallbackContext
         if not transcription:
             return next_state - 1  # Stay in current state
         
-        # Get stored prompt
+        # Get stored prompt and current question info
         speaking_prompt = context.user_data.get('current_speaking_prompt', 'Unknown prompt')
+        current_question_key = context.user_data.get('current_question_key', f'part_{part_number}_q_1')
+        current_question_in_part = context.user_data.get('current_question_in_part', 1)
+        total_questions_in_part = context.user_data.get('total_questions_per_part', {}).get(part_number, 1)
         
         # Evaluate response
         evaluation = evaluate_speaking_response_for_simulation(
@@ -2565,58 +2704,45 @@ async def handle_full_sim_part_response(update: Update, context: CallbackContext
         # Extract scores
         scores = extract_scores_from_evaluation(evaluation)
         
-        # Store response data
-        context.user_data['part_scores'][part_number] = scores['overall']
-        context.user_data['part_transcriptions'][part_number] = transcription
-        context.user_data['part_evaluations'][part_number] = evaluation
+        # Store response data for this specific question
+        context.user_data['question_scores'][current_question_key] = scores['overall']
+        context.user_data['question_transcriptions'][current_question_key] = transcription
+        context.user_data['question_evaluations'][current_question_key] = evaluation
         
-        # Save to database
-        session_id = context.user_data['simulation_session_id']
-        db.save_part_response(
-            session_id, part_number, speaking_prompt, 
-            transcription, scores, evaluation
-        )
-        
-        # Show part completion message (without scores)
+        # Show simple question completion message (NO feedback, NO scores)
         completion_msg = (
-            f"✅ <b>Часть {part_number} завершена!</b>\n\n"
-            f"🎤 <b>Ваш ответ записан и обработан</b>\n\n"
+            f"✅ <b>Вопрос {current_question_in_part} записан!</b>\n\n"
+            f"<i>💡 Ваш ответ сохранен. Все оценки и анализ будут показаны в конце симуляции.</i>\n\n"
         )
         
-        if next_state is None:
-            # Last part completed, show completion message
+        # Check if more questions in current part
+        if current_question_in_part < total_questions_in_part:
+            # Move to next question in same part
+            next_question_num = current_question_in_part + 1
+            context.user_data['current_question_in_part'] = next_question_num
+            next_question_key = f"part_{part_number}_q_{next_question_num}"
+            context.user_data['current_question_key'] = next_question_key
+            
+            # Generate next question for same part
+            if part_number == 2:
+                # Part 2 only has one cue card, so this shouldn't happen
+                next_prompt = context.user_data['current_speaking_prompt']
+            else:
+                next_prompt = generate_speaking_question(part=f"Part {part_number}")
+            
+            context.user_data['current_speaking_prompt'] = next_prompt
+            
+            part_name = "Короткие вопросы" if part_number == 1 else "Дискуссия"
             completion_msg += (
-                f" <b>Все части завершены!</b>\n\n"
-                f"⏳ Рассчитываю общий результат и готовлю детальный анализ..."
-            )
-            keyboard = [
-                [InlineKeyboardButton("⏳ Обрабатываю...", callback_data="processing")]
-            ]
-            
-            await update.message.reply_text(
-                text=completion_msg,
-                parse_mode='HTML',
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
-            
-            # Calculate final results and end conversation
-            await calculate_and_show_final_results(update, context)
-            return ConversationHandler.END
-        else:
-            # Generate next part question
-            next_part_prompt = generate_speaking_question(part=f"Part {part_number + 1}")
-            context.user_data['current_speaking_prompt'] = next_part_prompt
-            
-            completion_msg += (
-                f"🔄 <b>Переходим к части {part_number + 1}</b>\n\n"
-                f"{next_part_prompt}\n\n"
+                f"➡️ <b>Следующий вопрос части {part_number}: {part_name}</b>\n"
+                f"❓ <b>Вопрос {next_question_num} из {total_questions_in_part}</b>\n\n"
+                f"{next_prompt}\n\n"
                 f"🎤 <b>Запишите голосовой ответ</b>\n"
-                f"⏱️ <b>Рекомендуемое время:</b> "
-                f"{'1-2 минуты' if part_number + 1 == 2 else '30-90 секунд'}"
+                f"⏱️ <b>Рекомендуемое время:</b> 30-60 секунд"
             )
             
             keyboard = [
-                [InlineKeyboardButton("⏭️ Пропустить часть", callback_data=f"skip_part_{part_number + 1}")],
+                [InlineKeyboardButton("⏭️ Пропустить вопрос", callback_data=f"skip_question_{part_number}")],
                 [InlineKeyboardButton("❌ Отменить симуляцию", callback_data="abandon_full_sim")]
             ]
             
@@ -2626,14 +2752,97 @@ async def handle_full_sim_part_response(update: Update, context: CallbackContext
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
             
-            return next_state
+            return next_state - 1  # Stay in same part state
+            
+        else:
+            # Current part completed, calculate part average and check if simulation is done
+            part_question_scores = [
+                context.user_data['question_scores'].get(f"part_{part_number}_q_{q}", 0)
+                for q in range(1, total_questions_in_part + 1)
+            ]
+            part_average = sum(part_question_scores) / len(part_question_scores) if part_question_scores else 0
+            context.user_data['part_scores'][part_number] = part_average
+            
+            # Save part summary to database (using average score)
+            session_id = context.user_data['simulation_session_id']
+            combined_transcription = " | ".join([
+                context.user_data['question_transcriptions'].get(f"part_{part_number}_q_{q}", "")
+                for q in range(1, total_questions_in_part + 1)
+            ])
+            combined_evaluation = " | ".join([
+                context.user_data['question_evaluations'].get(f"part_{part_number}_q_{q}", "")
+                for q in range(1, total_questions_in_part + 1)
+            ])
+            
+            db.save_part_response(
+                session_id, part_number, f"Part {part_number} Combined Questions", 
+                combined_transcription, {'overall': part_average}, combined_evaluation
+            )
+            
+            if next_state is None:
+                # Last part completed, show completion message
+                completion_msg += (
+                    f"🏁 <b>Все части завершены!</b>\n\n"
+                    f"⏳ Рассчитываю общий результат и готовлю детальный анализ по всем критериям IELTS..."
+                )
+                keyboard = [
+                    [InlineKeyboardButton("⏳ Обрабатываю...", callback_data="processing")]
+                ]
+                
+                await update.message.reply_text(
+                    text=completion_msg,
+                    parse_mode='HTML',
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+                
+                # Calculate final results and end conversation
+                await calculate_and_show_final_results(update, context)
+                return ConversationHandler.END
+            else:
+                # Move to next part
+                next_part = part_number + 1
+                context.user_data['current_part'] = next_part
+                context.user_data['current_question_in_part'] = 1
+                next_question_key = f"part_{next_part}_q_1"
+                context.user_data['current_question_key'] = next_question_key
+                
+                # Generate first question of next part
+                next_part_prompt = generate_speaking_question(part=f"Part {next_part}")
+                context.user_data['current_speaking_prompt'] = next_part_prompt
+                
+                # Get part info
+                part_names = {2: "Карточка-монолог", 3: "Дискуссия"}
+                part_name = part_names.get(next_part, f"Часть {next_part}")
+                total_questions_next = context.user_data.get('total_questions_per_part', {}).get(next_part, 1)
+                
+                completion_msg += (
+                    f"➡️ <b>Переходим к части {next_part}: {part_name}</b>\n"
+                    f"❓ <b>Вопрос 1 из {total_questions_next}</b>\n\n"
+                    f"{next_part_prompt}\n\n"
+                    f"🎤 <b>Запишите голосовой ответ</b>\n"
+                    f"⏱️ <b>Рекомендуемое время:</b> "
+                    f"{'1-2 минуты' if next_part == 2 else '30-90 секунд'}"
+                )
+                
+                keyboard = [
+                    [InlineKeyboardButton("⏭️ Пропустить часть", callback_data=f"skip_part_{next_part}")],
+                    [InlineKeyboardButton("❌ Отменить симуляцию", callback_data="abandon_full_sim")]
+                ]
+                
+                await update.message.reply_text(
+                    text=completion_msg,
+                    parse_mode='HTML',
+                    reply_markup=InlineKeyboardMarkup(keyboard)
+                )
+                
+                return next_state
         
     except Exception as e:
         logger.error(f"🔥 Error processing part {part_number} response: {e}")
         await update.message.reply_text(
-            f"❌ Произошла ошибка при обработке части {part_number}. Попробуйте еще раз.",
+            f"❌ Произошла ошибка при обработке вопроса. Попробуйте еще раз.",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🔄 Повторить", callback_data=f"retry_part_{part_number}")],
+                [InlineKeyboardButton("🔄 Повторить", callback_data=f"retry_question_{part_number}")],
                 [InlineKeyboardButton("❌ Отменить", callback_data="abandon_full_sim")]
             ])
         )
@@ -2758,12 +2967,29 @@ async def calculate_and_show_final_results(update: Update, context: CallbackCont
         feedback = generate_comprehensive_feedback(part_scores, overall_band)
         
         # Generate detailed analysis immediately
-        part_transcriptions = context.user_data.get('part_transcriptions', {})
-        part_evaluations = context.user_data.get('part_evaluations', {})
+        # For detailed analysis, use question-level data but display by parts
+        question_transcriptions = context.user_data.get('question_transcriptions', {})
+        question_evaluations = context.user_data.get('question_evaluations', {})
+        
+        # Convert question data to part data for analysis
+        part_transcriptions = {}
+        part_evaluations = {}
+        for part_num in [1, 2, 3]:
+            if part_num in part_scores:
+                total_questions = context.user_data.get('total_questions_per_part', {}).get(part_num, 1)
+                part_transcriptions[part_num] = " | ".join([
+                    question_transcriptions.get(f"part_{part_num}_q_{q}", "")
+                    for q in range(1, total_questions + 1)
+                ])
+                part_evaluations[part_num] = " | ".join([
+                    question_evaluations.get(f"part_{part_num}_q_{q}", "")
+                    for q in range(1, total_questions + 1)
+                ])
+        
         overall_criteria = calculate_overall_criteria_scores(part_scores, part_evaluations)
         
-        detailed_analysis = generate_detailed_analysis(
-            part_scores, part_transcriptions, part_evaluations, overall_criteria
+        detailed_analysis = generate_detailed_analysis_with_questions(
+            part_scores, question_transcriptions, question_evaluations, overall_criteria, context.user_data
         )
         
         # Create complete results message
@@ -3185,6 +3411,325 @@ full_speaking_simulation_handler = ConversationHandler(
     persistent=False,
     per_message=False
 )
+
+# --- GROUP CHAT COMMANDS ---
+async def handle_group_word_command(update: Update, context: CallbackContext) -> None:
+    """Handle /word command in group chats"""
+    # Check if this is a group chat
+    if not is_group_chat(update):
+        await update.message.reply_text(
+            "📱 <b>Эта команда работает только в групповых чатах!</b>\n\n"
+            "Для личного изучения словаря используйте команду /menu и выберите 'Словарь'.",
+            parse_mode='HTML'
+        )
+        return
+    
+    group_info = get_group_info(update)
+    user = update.effective_user
+    
+    try:
+        # Add group to database if not exists
+        db.add_group_chat(group_info['group_id'], group_info['group_title'], group_info['group_type'])
+        
+        # Show typing action
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+        
+        # Generate unique word for this group
+        word_details = get_random_word_for_group(group_info['group_id'])
+        
+        # Extract word components
+        word, definition, translation, example = extract_word_components(word_details)
+        
+        # Save word to group history
+        success = db.save_word_to_group(
+            group_info['group_id'], word, definition, translation, example, user.id
+        )
+        
+        if success:
+            # Send word to group with additional info
+            group_word_message = (
+                f"{word_details}\n\n"
+                f"👥 <b>Группа:</b> {group_info['group_title']}\n"
+                f"👤 <b>Запросил:</b> {user.first_name}\n"
+                f"🎯 <i>Каждое слово уникально для этой группы!</i>"
+            )
+            
+            await update.message.reply_text(group_word_message, parse_mode='HTML')
+            logger.info(f"✅ Sent word '{word}' to group {group_info['group_id']} by user {user.id}")
+        else:
+            await update.message.reply_text(
+                "❌ Произошла ошибка при сохранении слова. Попробуйте позже.",
+                parse_mode='HTML'
+            )
+    
+    except Exception as e:
+        logger.error(f"🔥 Error in group word command: {e}")
+        await update.message.reply_text(
+            "❌ Произошла ошибка при генерации слова. Попробуйте позже.",
+            parse_mode='HTML'
+        )
+
+async def handle_group_stats_command(update: Update, context: CallbackContext) -> None:
+    """Show statistics for group word usage (admin only)"""
+    user = update.effective_user
+    
+    if not is_admin(user.id):
+        await update.message.reply_text("❌ Эта команда доступна только администраторам.")
+        return
+    
+    try:
+        if is_group_chat(update):
+            # Show stats for current group
+            group_info = get_group_info(update)
+            stats = db.get_group_stats(group_info['group_id'])
+            
+            stats_message = (
+                f"📊 <b>СТАТИСТИКА ГРУППЫ</b>\n\n"
+                f"👥 <b>Группа:</b> {stats.get('group_title', 'Unknown')}\n"
+                f"🆔 <b>ID:</b> <code>{stats.get('group_id')}</code>\n"
+                f"📝 <b>Отправлено слов:</b> {stats.get('word_count', 0)}\n"
+                f"📅 <b>Последняя активность:</b> {stats.get('last_activity', 'N/A')}\n"
+            )
+        else:
+            # Show global stats
+            stats = db.get_group_stats()
+            all_groups = db.get_all_groups(limit=10)
+            
+            stats_message = (
+                f"📊 <b>ГЛОБАЛЬНАЯ СТАТИСТИКА ГРУПП</b>\n\n"
+                f"👥 <b>Всего групп:</b> {stats.get('total_groups', 0)}\n"
+                f"🔥 <b>Активных групп:</b> {stats.get('active_groups', 0)}\n"
+                f"📝 <b>Всего слов отправлено:</b> {stats.get('total_words_sent', 0)}\n\n"
+                f"<b>📋 ТОП-10 АКТИВНЫХ ГРУПП:</b>\n"
+            )
+            
+            for i, group in enumerate(all_groups[:10], 1):
+                group_id, title, group_type, added_at, last_activity, word_count = group
+                stats_message += f"{i}. {title[:20]}... ({word_count} слов)\n"
+        
+        await update.message.reply_text(stats_message, parse_mode='HTML')
+        
+    except Exception as e:
+        logger.error(f"🔥 Error in group stats command: {e}")
+        await update.message.reply_text("❌ Ошибка при получении статистики.")
+
+async def handle_group_reset_command(update: Update, context: CallbackContext) -> None:
+    """Reset word history for a group (admin only)"""
+    user = update.effective_user
+    
+    if not is_admin(user.id):
+        await update.message.reply_text("❌ Эта команда доступна только администраторам.")
+        return
+    
+    if not is_group_chat(update):
+        await update.message.reply_text("❌ Эта команда работает только в групповых чатах.")
+        return
+    
+    try:
+        group_info = get_group_info(update)
+        
+        # Get current stats before clearing
+        stats = db.get_group_stats(group_info['group_id'])
+        word_count = stats.get('word_count', 0)
+        
+        if word_count == 0:
+            await update.message.reply_text("ℹ️ В этой группе нет слов для очистки.")
+            return
+        
+        # Clear words
+        success = db.clear_group_words(group_info['group_id'])
+        
+        if success:
+            reset_message = (
+                f"✅ <b>ИСТОРИЯ СЛОВ ОЧИЩЕНА</b>\n\n"
+                f"👥 <b>Группа:</b> {group_info['group_title']}\n"
+                f"🗑️ <b>Удалено слов:</b> {word_count}\n"
+                f"👤 <b>Очистил:</b> {user.first_name}\n\n"
+                f"🎯 <i>Теперь можно снова получать все слова!</i>"
+            )
+            await update.message.reply_text(reset_message, parse_mode='HTML')
+        else:
+            await update.message.reply_text("❌ Ошибка при очистке истории слов.")
+    
+    except Exception as e:
+        logger.error(f"🔥 Error in group reset command: {e}")
+        await update.message.reply_text("❌ Ошибка при очистке истории слов.")
+
+async def handle_group_history_command(update: Update, context: CallbackContext) -> None:
+    """Show recent words sent to this group"""
+    if not is_group_chat(update):
+        await update.message.reply_text("❌ Эта команда работает только в групповых чатах.")
+        return
+    
+    try:
+        group_info = get_group_info(update)
+        recent_words = db.get_group_sent_words(group_info['group_id'], limit=10)
+        
+        if not recent_words:
+            await update.message.reply_text(
+                "📝 <b>История слов пуста</b>\n\n"
+                "Используйте команду /word чтобы получить первое слово!",
+                parse_mode='HTML'
+            )
+            return
+        
+        history_message = (
+            f"📚 <b>ПОСЛЕДНИЕ СЛОВА В ГРУППЕ</b>\n"
+            f"👥 <b>{group_info['group_title']}</b>\n\n"
+        )
+        
+        for i, (word, definition, translation, example, sent_at, sent_by_user_id) in enumerate(recent_words[:5], 1):
+            history_message += (
+                f"<b>{i}. {word.title()}</b>\n"
+                f"   📖 {definition[:50]}{'...' if len(definition) > 50 else ''}\n"
+                f"   🇷🇺 {translation}\n"
+                f"   📅 {sent_at[:10]}\n\n"
+            )
+        
+        history_message += f"📝 <i>Показано {min(len(recent_words), 5)} из {len(recent_words)} слов</i>"
+        
+        await update.message.reply_text(history_message, parse_mode='HTML')
+        
+    except Exception as e:
+        logger.error(f"🔥 Error in group history command: {e}")
+        await update.message.reply_text("❌ Ошибка при получении истории слов.")
+
+async def handle_group_autosend_command(update: Update, context: CallbackContext) -> None:
+    """Enable/disable auto-send for current group (admin only)"""
+    user = update.effective_user
+    
+    if not is_admin(user.id):
+        await update.message.reply_text("❌ Эта команда доступна только администраторам.")
+        return
+    
+    if not is_group_chat(update):
+        await update.message.reply_text("❌ Эта команда работает только в групповых чатах.")
+        return
+    
+    try:
+        group_info = get_group_info(update)
+        
+        # Get current settings
+        settings = db.get_group_settings(group_info['group_id'])
+        current_status = settings.get('auto_send_enabled', False)
+        
+        # Toggle auto-send
+        new_status = not current_status
+        
+        # Update settings
+        success = db.update_group_settings(
+            group_info['group_id'],
+            auto_send_enabled=new_status,
+            send_interval_hours=24  # Daily
+        )
+        
+        if success:
+            if new_status:
+                status_message = (
+                    f"✅ <b>АВТООТПРАВКА ВКЛЮЧЕНА</b>\n\n"
+                    f"👥 <b>Группа:</b> {group_info['group_title']}\n"
+                    f"🕐 <b>Интервал:</b> Каждый день\n"
+                    f"<i>💡 Бот будет автоматически отправлять уникальные слова в эту группу каждый день!</i>"
+                )
+            else:
+                status_message = (
+                    f"❌ <b>АВТООТПРАВКА ОТКЛЮЧЕНА</b>\n\n"
+                    f"👥 <b>Группа:</b> {group_info['group_title']}\n"
+                    f"📝 <b>Статус:</b> Автоматическая отправка слов отключена\n\n"
+                    f"<i>💡 Используйте команду /word для ручного получения слов</i>"
+                )
+            
+            await update.message.reply_text(status_message, parse_mode='HTML')
+        else:
+            await update.message.reply_text("❌ Ошибка при изменении настроек автоотправки.")
+    
+    except Exception as e:
+        logger.error(f"🔥 Error in autosend command: {e}")
+        await update.message.reply_text("❌ Ошибка при настройке автоотправки.")
+
+# --- AUTO-SEND FUNCTIONALITY ---
+async def auto_send_words_to_groups(context: CallbackContext) -> None:
+    """Send words automatically to groups with auto-send enabled"""
+    from datetime import datetime, timedelta
+    
+    try:
+        # Get all groups with auto-send enabled
+        groups_with_autosend = db.get_groups_with_auto_send()
+        
+        logger.info(f"🔄 Checking auto-send for {len(groups_with_autosend)} groups")
+        
+        for group in groups_with_autosend:
+            group_id = group[0]
+            group_title = group[1]
+            last_auto_send = group[2]
+            send_interval_hours = group[3]
+            
+            # Check if it's time to send a word
+            if should_send_word_to_group(last_auto_send, send_interval_hours):
+                try:
+                    # Generate unique word for this group
+                    word_details = get_random_word_for_group(group_id)
+                    
+                    # Extract word components
+                    word, definition, translation, example = extract_word_components(word_details)
+                    
+                    # Save word to group history (using system user ID = 0)
+                    success = db.save_word_to_group(
+                        group_id, word, definition, translation, example, 0  # System user
+                    )
+                    
+                    if success:
+                        # Send auto word message
+                        auto_word_message = (
+                            f"🕐 <b>СЛОВО ДНЯ</b> (автоматическая отправка)\n\n"
+                            f"{word_details}\n\n"
+                            f"👥 <b>Группа:</b> {group_title}\n"
+                            f"🤖 <b>Отправлено автоматически</b>\n"
+                            f"🎯 <i>Каждое слово уникально для этой группы!</i>"
+                        )
+                        
+                        # Send message to group
+                        await context.bot.send_message(
+                            chat_id=group_id,
+                            text=auto_word_message,
+                            parse_mode='HTML'
+                        )
+                        
+                        # Update last auto send time
+                        db.update_group_settings(
+                            group_id,
+                            last_auto_send=datetime.now().isoformat()
+                        )
+                        
+                        logger.info(f"✅ Auto-sent word '{word}' to group {group_id} ({group_title})")
+                    else:
+                        logger.error(f"🔥 Failed to save auto word for group {group_id}")
+                
+                except Exception as e:
+                    logger.error(f"🔥 Error auto-sending to group {group_id}: {e}")
+    
+    except Exception as e:
+        logger.error(f"🔥 Error in auto_send_words_to_groups: {e}")
+
+def should_send_word_to_group(last_auto_send: str, send_interval_hours: int) -> bool:
+    """Check if it's time to send a word to a group"""
+    from datetime import datetime, timedelta
+    
+    if not last_auto_send:
+        # Never sent before, send now
+        return True
+    
+    try:
+        last_send_time = datetime.fromisoformat(last_auto_send)
+        now = datetime.now()
+        time_diff = now - last_send_time
+        
+        # Check if enough time has passed
+        return time_diff >= timedelta(hours=send_interval_hours)
+    
+    except Exception as e:
+        logger.error(f"🔥 Error checking send time: {e}")
+        return False
 
 @require_access
 async def handle_writing_task_type_global(update: Update, context: CallbackContext) -> None:

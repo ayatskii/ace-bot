@@ -43,6 +43,22 @@ ADMIN_USER_IDS = [
 # Admin Features
 ENABLE_ADMIN_PANEL = True  # Set to False to disable admin features
 
+# Group Chat Configuration
+ENABLE_GROUP_FEATURES = True  # Set to False to disable group chat features
+MAX_WORDS_PER_GROUP = 1000  # Limit to prevent database bloat
+AUTO_SEND_INTERVAL_HOURS = 24  # Default interval for auto-sending words
+DEFAULT_WORD_DIFFICULTY = "IELTS Band 7-9 (C1/C2)"  # Default difficulty level
+
+# Auto-Send Configuration
+ENABLE_AUTO_SEND = True  # Set to False to disable auto-send functionality
+AUTO_SEND_CHECK_INTERVAL = 60  # Check every hour (3600 seconds)
+DAILY_SEND_TIME_HOUR = 17  # Send daily words at 9:00 AM
+DAILY_SEND_TIME_MINUTE = 24  # Send daily words at 9:00 AM
+
+# Group Access Control
+ALLOWED_GROUP_IDS = []  # Empty = allow all groups, or specify group IDs like [-1001234567890]
+REQUIRE_ADMIN_FOR_GROUP_COMMANDS = False  # If True, only admins can use /word in groups
+
 ROLE_PROMPT = f"""
 You are an elite IELTS tutor and language assessment expert. Your personal, certified IELTS score is 9.0 in all modules, and your students consistently achieve a minimum of Band 8.0 on the official exam. You possess a comprehensive and deep understanding of the official IELTS assessment criteria, including the public band descriptors for Writing Task 2.[3, 4]
 
