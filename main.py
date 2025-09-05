@@ -111,6 +111,8 @@ def main():
     
     # Add flashcard callback handlers
     application.add_handler(CallbackQueryHandler(flashcard_handlers.handle_flashcard_menu, pattern=r'^flashcard_menu$'))
+    application.add_handler(CallbackQueryHandler(flashcard_handlers.handle_flashcard_study, pattern=r'^flashcard_study$'))
+    application.add_handler(CallbackQueryHandler(flashcard_handlers.handle_add_random_words, pattern=r'^flashcard_add_random$'))
     
     logger.info("✅ Callback query handlers registered.")
 

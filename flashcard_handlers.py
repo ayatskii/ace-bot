@@ -89,6 +89,20 @@ async def handle_flashcard_study(update: Update, context: CallbackContext) -> No
     query = update.callback_query
     await query.answer()
     
+    # Show loading message
+    await query.edit_message_text(
+        "🔄 <b>Подготавливаем карточки для изучения...</b>\n\n"
+        "📚 Загружаем ваши слова из словаря\n"
+        "🎲 Добавляем случайные слова IELTS\n"
+        "🔀 Перемешиваем карточки\n\n"
+        "<i>⏳ Это займет несколько секунд...</i>",
+        parse_mode='HTML'
+    )
+    
+    # Add a small delay for better UX
+    import asyncio
+    await asyncio.sleep(1)
+    
     # Get user's vocabulary words
     user_vocabulary = db.get_user_vocabulary(user.id, limit=50)
     
@@ -336,8 +350,9 @@ async def end_study_session(update: Update, context: CallbackContext) -> None:
     
     keyboard = [
         [InlineKeyboardButton("📚 Еще карточки", callback_data="flashcard_study")],
-        [InlineKeyboardButton("📊 Статистика", callback_data="flashcard_stats")],
-        [InlineKeyboardButton("🔙 Главное меню", callback_data="main_menu")]
+        [InlineKeyboardButton("📖 Мой словарь", callback_data="profile_vocabulary")],
+        [InlineKeyboardButton("🎓 Flashcards меню", callback_data="flashcard_menu")],
+        [InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_main_menu")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
@@ -476,7 +491,10 @@ async def handle_add_random_words(update: Update, context: CallbackContext) -> N
     
     await query.edit_message_text(
         "🎲 <b>Добавляем случайные слова...</b>\n\n"
-        "<i>Генерируем полезные слова для изучения IELTS</i>",
+        "🤖 Генерируем полезные слова для изучения IELTS\n"
+        "📚 Уровень: IELTS Band 7-9 (C1/C2)\n"
+        "🎯 Количество: 10 слов\n\n"
+        "<i>⏳ Это займет 10-15 секунд...</i>",
         parse_mode='HTML'
     )
     
@@ -563,10 +581,15 @@ flashcard_conversation_handler = ConversationHandler(
             CallbackQueryHandler(lambda u, c: handle_card_rating(u, c, 4), pattern="^flashcard_rate_4$"),
             CallbackQueryHandler(lambda u, c: handle_card_rating(u, c, 2), pattern="^flashcard_skip$"),  # Skip = Hard
             CallbackQueryHandler(end_study_session, pattern="^flashcard_end_session$"),
+            # Add handlers for end session buttons
+            CallbackQueryHandler(handle_flashcard_study, pattern="^flashcard_study$"),
+            CallbackQueryHandler(handle_flashcard_menu, pattern="^flashcard_menu$"),
         ],
     },
     fallbacks=[
         CallbackQueryHandler(handle_flashcard_menu, pattern="^flashcard_menu$"),
+        CallbackQueryHandler(handle_flashcard_study, pattern="^flashcard_study$"),
+        CallbackQueryHandler(handle_add_random_words, pattern="^flashcard_add_random$"),
         CommandHandler("cancel", handle_flashcard_menu),
     ],
 )
