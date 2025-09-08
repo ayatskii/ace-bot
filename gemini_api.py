@@ -12,6 +12,9 @@ logger = logging.getLogger(__name__)
 model = None
 writing_model = None
 
+# System instruction to be prepended to prompts
+SYSTEM_INSTRUCTION = """You are an elite IELTS tutor and examiner with a 9.0 score. Your responses must be accurate, professional, and directly address the user's request without any unnecessary conversational text. When the user interface is in Russian, provide your responses in Russian as well."""
+
 def initialize_gemini():
     """Initializes the Gemini model with the API key and a system instruction."""
     global model, writing_model
@@ -25,8 +28,7 @@ def initialize_gemini():
         )
         
         model = genai.GenerativeModel(
-            model_name='gemini-2.5-flash',
-            system_instruction="You are an elite IELTS tutor and examiner with a 9.0 score. Your responses must be accurate, professional, and directly address the user's request without any unnecessary conversational text. When the user interface is in Russian, provide your responses in Russian as well.",
+            model_name='gemini-1.5-flash',
             generation_config=generation_config
         )
         
@@ -37,8 +39,7 @@ def initialize_gemini():
         )
         
         writing_model = genai.GenerativeModel(
-            model_name='gemini-2.5-pro',
-            system_instruction="You are an elite IELTS tutor and examiner with a 9.0 score. Your responses must be accurate, professional, and directly address the user's request without any unnecessary conversational text. When the user interface is in Russian, provide your responses in Russian as well.",
+            model_name='gemini-1.5-pro',
             generation_config=writing_config
         )
         
@@ -54,10 +55,13 @@ def generate_text_with_retry(prompt: str, max_retries: int = 3, base_delay: floa
         logger.error("🔥 Gemini model not initialized. Call initialize_gemini() first.")
         return "Error: The AI model is not available. Please contact the administrator."
 
+    # Prepend system instruction to the prompt
+    full_prompt = f"{SYSTEM_INSTRUCTION}\n\n{prompt}"
+
     for attempt in range(max_retries):
         try:
             logger.info(f"➡️ Sending prompt to Gemini (attempt {attempt + 1}/{max_retries}): '{prompt[:80]}...'")
-            response = model.generate_content(prompt)
+            response = model.generate_content(full_prompt)
             response_text = response.text.strip()
             
             # Check if response is empty or too short
@@ -96,10 +100,13 @@ def generate_writing_text_with_retry(prompt: str, max_retries: int = 3, base_del
         logger.error("🔥 Writing Gemini model not initialized. Call initialize_gemini() first.")
         return "Error: The AI model is not available. Please contact the administrator."
 
+    # Prepend system instruction to the prompt
+    full_prompt = f"{SYSTEM_INSTRUCTION}\n\n{prompt}"
+
     for attempt in range(max_retries):
         try:
             logger.info(f"➡️ Sending writing prompt to Gemini Pro (attempt {attempt + 1}/{max_retries}): '{prompt[:80]}...'")
-            response = writing_model.generate_content(prompt)
+            response = writing_model.generate_content(full_prompt)
             response_text = response.text.strip()
             
             # Check if response is empty or too short
@@ -275,6 +282,54 @@ def evaluate_writing(writing_text: str, task_description: str) -> str:
     **Do not add any other text, explanations, or concluding phrases. Use only the format above.**
     """
     return generate_writing_text(prompt)
+
+def generate_single_speaking_question(part: str, topic: str = "a common topic") -> str:
+    """Generate a single IELTS speaking question for the specified part."""
+    if "part 2" in part.lower():
+        prompt = f"""
+        Generate one IELTS Speaking Part 2 cue card on the topic of "{topic}".
+
+        **Your output must strictly follow this exact format:**
+
+        🗣️ IELTS SPEAKING PART 2
+
+        📋 Cue Card:
+        Describe [the topic related to {topic}]
+
+        You should say:
+        • [First bullet point]
+        • [Second bullet point]  
+        • [Third bullet point]
+        • [Fourth bullet point]
+
+        And explain [what you should explain]
+
+        ⏰ Preparation Time: 1 minute
+        🎤 Speaking Time: 1-2 minutes
+
+        **Do not add any other text, explanations, or introductory phrases. Use only the format above.**
+        """
+    elif "part 3" in part.lower():
+        prompt = f"""
+        Generate one IELTS Speaking Part 3 discussion question related to the topic of "{topic}".
+
+        **Your output must be a single question only:**
+
+        [One thought-provoking discussion question about {topic}]
+
+        **Do not include any formatting, numbering, or additional text. Just provide one question.**
+        """
+    else: # Default to Part 1
+        prompt = f"""
+        Generate one IELTS Speaking Part 1 personal question on the topic of "{topic}".
+
+        **Your output must be a single question only:**
+
+        [One personal question about {topic}]
+
+        **Do not include any formatting, numbering, or additional text. Just provide one question.**
+        """
+    return generate_text(prompt)
 
 def generate_speaking_question(part: str, topic: str = "a common topic") -> str:
     """Constructs a strict prompt to generate only the IELTS speaking questions."""

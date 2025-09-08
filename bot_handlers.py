@@ -9,7 +9,7 @@ from database import db
 
 from gemini_api import (
     get_random_word_details, generate_ielts_writing_task, evaluate_writing,
-    generate_speaking_question, generate_ielts_strategies, explain_grammar_structure,
+    generate_speaking_question, generate_single_speaking_question, generate_ielts_strategies, explain_grammar_structure,
     get_topic_specific_words, evaluate_speaking_response, evaluate_speaking_response_for_simulation,
     extract_scores_from_evaluation, extract_writing_scores_from_evaluation, add_custom_word_to_dictionary
 )
@@ -2598,6 +2598,184 @@ async def handle_voice_message(update: Update, context: CallbackContext) -> None
             )
 
 # --- Full Speaking Simulation Functions ---
+
+async def display_single_question(update: Update, context: CallbackContext) -> None:
+    """Display a single question based on current part and question number"""
+    current_part = context.user_data.get('current_part', 1)
+    question_num = context.user_data.get('current_question_in_part', 1)
+    total_questions = context.user_data.get('total_questions_per_part', {}).get(current_part, 1)
+    
+    # Generate single question for current part
+    question = generate_single_speaking_question(f"Part {current_part}")
+    context.user_data['current_question'] = question
+    
+    # Format question display with progress indicator
+    question_text = format_question_display(current_part, question_num, total_questions, question)
+    
+    # Create navigation buttons
+    keyboard = [
+        [InlineKeyboardButton("⏭ Пропустить вопрос", callback_data="skip_question")],
+        [InlineKeyboardButton("❌ Выйти из симуляции", callback_data="abandon_full_sim")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Send question
+    if update.callback_query:
+        await update.callback_query.edit_message_text(question_text, reply_markup=reply_markup, parse_mode='HTML')
+    else:
+        await update.message.reply_text(question_text, reply_markup=reply_markup, parse_mode='HTML')
+
+def format_question_display(part: int, question_num: int, total_questions: int, question: str) -> str:
+    """Format question display with progress and instructions"""
+    part_names = {1: "Короткие вопросы", 2: "Карточка-монолог", 3: "Дискуссия"}
+    time_limits = {1: "30-60 секунд", 2: "1-2 минуты", 3: "30-90 секунд"}
+    
+    progress = f"{question_num}/{total_questions}"
+    
+    return f"""🎯 <b>IELTS Speaking Part {part}: {part_names[part]}</b>
+📊 <b>Прогресс:</b> {progress}
+
+{question}
+
+🎤 <b>Запишите голосовой ответ ({time_limits[part]})</b>"""
+
+async def move_to_next_question(update: Update, context: CallbackContext) -> int:
+    """Move to next question within current part or to next part"""
+    current_part = context.user_data.get('current_part', 1)
+    current_question = context.user_data.get('current_question_in_part', 1)
+    total_questions = context.user_data.get('total_questions_per_part', {}).get(current_part, 1)
+    
+    if current_question < total_questions:
+        # More questions in current part
+        context.user_data['current_question_in_part'] += 1
+        await display_single_question(update, context)
+        return get_current_state(current_part)
+    else:
+        # Move to next part
+        return await move_to_next_part(update, context)
+
+async def move_to_next_part(update: Update, context: CallbackContext) -> int:
+    """Move to next part of the simulation"""
+    current_part = context.user_data.get('current_part', 1)
+    
+    # Calculate part average score
+    total_questions_in_part = context.user_data.get('total_questions_per_part', {}).get(current_part, 1)
+    part_question_scores = [
+        context.user_data.get('question_scores', {}).get(f"part_{current_part}_q_{q}", 0)
+        for q in range(1, total_questions_in_part + 1)
+    ]
+    part_average = sum(part_question_scores) / len(part_question_scores) if part_question_scores else 0
+    context.user_data.setdefault('part_scores', {})[current_part] = part_average
+    
+    # Save part summary to database
+    session_id = context.user_data.get('simulation_session_id')
+    if session_id:
+        combined_transcription = " | ".join([
+            context.user_data.get('question_transcriptions', {}).get(f"part_{current_part}_q_{q}", "")
+            for q in range(1, total_questions_in_part + 1)
+        ])
+        combined_evaluation = " | ".join([
+            context.user_data.get('question_evaluations', {}).get(f"part_{current_part}_q_{q}", "")
+            for q in range(1, total_questions_in_part + 1)
+        ])
+        
+        db.save_part_response(
+            session_id, current_part, f"Part {current_part} Combined Questions", 
+            combined_transcription, {'overall': part_average}, combined_evaluation
+        )
+    
+    if current_part < 3:
+        # Move to next part
+        context.user_data['current_part'] += 1
+        context.user_data['current_question_in_part'] = 1
+        
+        part_names = {2: "Карточка-монолог", 3: "Дискуссия"}
+        part_name = part_names[context.user_data['current_part']]
+        
+        transition_msg = (
+            f"✅ <b>Часть {current_part} завершена!</b>\n\n"
+            f"➡️ <b>Переходим к части {context.user_data['current_part']}: {part_name}</b>\n\n"
+            f"<i>Подготавливаю следующий вопрос...</i>"
+        )
+        
+        if update.message:
+            await update.message.reply_text(transition_msg, parse_mode='HTML')
+        elif update.callback_query:
+            await update.callback_query.edit_message_text(transition_msg, parse_mode='HTML')
+        
+        # Small delay for better UX
+        import asyncio
+        await asyncio.sleep(1)
+        
+        await display_single_question(update, context)
+        return get_current_state(context.user_data['current_part'])
+    else:
+        # All parts completed
+        return await complete_simulation(update, context)
+
+def get_current_state(part_number: int) -> int:
+    """Get conversation handler state for current part"""
+    state_map = {1: FULL_SIM_PART_1, 2: FULL_SIM_PART_2, 3: FULL_SIM_PART_3}
+    return state_map.get(part_number, FULL_SIM_PART_1)
+
+async def handle_skip_question(update: Update, context: CallbackContext) -> int:
+    """Handle skipping current question"""
+    query = update.callback_query
+    await query.answer()
+    
+    current_part = context.user_data.get('current_part', 1)
+    current_question = context.user_data.get('current_question_in_part', 1)
+    
+    # Store empty/skipped response
+    question_key = f"part_{current_part}_q_{current_question}"
+    context.user_data.setdefault('question_scores', {})[question_key] = 0  # Score 0 for skipped
+    context.user_data.setdefault('question_transcriptions', {})[question_key] = "[Вопрос пропущен]"
+    context.user_data.setdefault('question_evaluations', {})[question_key] = "Вопрос был пропущен пользователем."
+    
+    await query.edit_message_text("⏭ <b>Вопрос пропущен.</b>\n\nПереходим к следующему...", parse_mode='HTML')
+    
+    # Small delay for better UX
+    import asyncio
+    await asyncio.sleep(1)
+    
+    return await move_to_next_question(update, context)
+
+async def handle_retry_question(update: Update, context: CallbackContext) -> int:
+    """Handle retrying current question"""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        "🔄 <b>Попробуем еще раз!</b>\n\n<i>Покажу вопрос заново...</i>", 
+        parse_mode='HTML'
+    )
+    
+    # Small delay for better UX
+    import asyncio
+    await asyncio.sleep(1)
+    
+    # Redisplay current question
+    await display_single_question(update, context)
+    
+    current_part = context.user_data.get('current_part', 1)
+    return get_current_state(current_part)
+
+async def complete_simulation(update: Update, context: CallbackContext) -> int:
+    """Complete the simulation and show final results"""
+    completion_msg = (
+        "🏁 <b>Все части завершены!</b>\n\n"
+        "⏳ Рассчитываю общий результат и готовлю детальный анализ по всем критериям IELTS..."
+    )
+    
+    if update.message:
+        await update.message.reply_text(completion_msg, parse_mode='HTML')
+    elif update.callback_query:
+        await update.callback_query.edit_message_text(completion_msg, parse_mode='HTML')
+    
+    # Calculate and show final results
+    await calculate_and_show_final_results(update, context)
+    return ConversationHandler.END
+
 async def start_full_speaking_simulation(update: Update, context: CallbackContext) -> int:
     """Start a full speaking simulation session"""
     user = update.effective_user
@@ -2633,39 +2811,30 @@ async def start_full_speaking_simulation(update: Update, context: CallbackContex
             'question_transcriptions': {},  # Store transcriptions for each question
             'question_evaluations': {},  # Store evaluations for each question
             'part_scores': {},  # Final part scores (average of questions)
-            'user_id': user.id
+            'user_id': user.id,
+            'current_question': None  # Current question text
         })
         
-        # Generate first question of Part 1
-        speaking_prompt = generate_speaking_question(part="Part 1")
-        context.user_data['current_speaking_prompt'] = speaking_prompt
-        
-        # Create question key for storage
-        question_key = f"part_{1}_q_{1}"
-        context.user_data['current_question_key'] = question_key
-        
-        # Show Part 1 instructions
-        instructions = (
+        # Show simulation start message
+        start_message = (
             f"🎯 <b>ПОЛНАЯ СИМУЛЯЦИЯ IELTS SPEAKING</b>\n\n"
-            f"📋 <b>Часть 1 из 3: Короткие вопросы</b>\n"
-            f"❓ <b>Вопрос 1 из 3</b>\n\n"
-            f"{speaking_prompt}\n\n"
-            f"🎤 <b>Запишите голосовой ответ</b>\n"
-            f"⏱️ <b>Рекомендуемое время:</b> 30-60 секунд\n\n"
-            f"<i>💡 <b>Важно:</b> Оценки по вопросам не показываются до завершения всей симуляции.\n"
-            f"В конце вы получите детальный анализ по всем критериям IELTS.</i>"
+            f"📋 <b>Структура экзамена:</b>\n"
+            f"• Часть 1: Короткие вопросы (3 вопроса)\n"
+            f"• Часть 2: Карточка-монолог (1 задание)\n"
+            f"• Часть 3: Дискуссия (3 вопроса)\n\n"
+            f"<i>💡 <b>Важно:</b> Оценки будут показаны только в конце симуляции.\n"
+            f"Каждый вопрос оценивается отдельно, и вы получите детальный анализ.</i>\n\n"
+            f"🚀 <b>Начинаем с первого вопроса...</b>"
         )
         
-        keyboard = [
-            [InlineKeyboardButton("⏭️ Пропустить часть", callback_data="skip_part_1")],
-            [InlineKeyboardButton("❌ Отменить симуляцию", callback_data="abandon_full_sim")]
-        ]
+        await query.edit_message_text(start_message, parse_mode='HTML')
         
-        await query.edit_message_text(
-            text=instructions,
-            parse_mode='HTML',
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        # Small delay for better UX
+        import asyncio
+        await asyncio.sleep(2)
+        
+        # Display first question
+        await display_single_question(update, context)
         
         logger.info(f"🎯 User {user.id} started full speaking simulation {session_id}")
         return FULL_SIM_PART_1
@@ -2680,21 +2849,101 @@ async def start_full_speaking_simulation(update: Update, context: CallbackContex
         )
         return ConversationHandler.END
 
+async def handle_simulation_response(update: Update, context: CallbackContext) -> int:
+    """Handle voice response for any part of the simulation"""
+    if not update.message.voice:
+        await update.message.reply_text(
+            "🎤 Пожалуйста, отправьте голосовое сообщение для ответа на вопрос.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("⏭ Пропустить вопрос", callback_data="skip_question")],
+                [InlineKeyboardButton("❌ Выйти из симуляции", callback_data="abandon_full_sim")]
+            ])
+        )
+        current_part = context.user_data.get('current_part', 1)
+        return get_current_state(current_part)
+    
+    try:
+        # Process voice message
+        transcription = await process_voice_message_for_simulation(update, context)
+        if not transcription:
+            await update.message.reply_text(
+                "❌ Не удалось обработать голосовое сообщение. Попробуйте еще раз.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("🔄 Повторить", callback_data="retry_current_question")],
+                    [InlineKeyboardButton("⏭ Пропустить", callback_data="skip_question")],
+                    [InlineKeyboardButton("❌ Выйти", callback_data="abandon_full_sim")]
+                ])
+            )
+            current_part = context.user_data.get('current_part', 1)
+            return get_current_state(current_part)
+        
+        # Get current question and part info
+        current_question = context.user_data.get('current_question', 'Unknown question')
+        current_part = context.user_data.get('current_part', 1)
+        question_num = context.user_data.get('current_question_in_part', 1)
+        
+        # Evaluate response
+        evaluation = evaluate_speaking_response_for_simulation(
+            current_question, transcription, f"Part {current_part}"
+        )
+        
+        # Extract scores
+        scores = extract_scores_from_evaluation(evaluation)
+        
+        # Store response data for this specific question
+        question_key = f"part_{current_part}_q_{question_num}"
+        context.user_data.setdefault('question_scores', {})[question_key] = scores.get('overall', 0)
+        context.user_data.setdefault('question_transcriptions', {})[question_key] = transcription
+        context.user_data.setdefault('question_evaluations', {})[question_key] = evaluation
+        
+        # Show simple confirmation message
+        confirmation_msg = (
+            f"✅ <b>Ответ записан!</b>\n\n"
+            f"📝 <b>Ваш ответ:</b> <i>{transcription[:100]}{'...' if len(transcription) > 100 else ''}</i>\n\n"
+            f"<i>💡 Ответ оценен и сохранен. Переходим к следующему вопросу...</i>"
+        )
+        
+        await update.message.reply_text(confirmation_msg, parse_mode='HTML')
+        
+        # Small delay for better UX
+        import asyncio
+        await asyncio.sleep(1)
+        
+        # Move to next question or part
+        return await move_to_next_question(update, context)
+        
+    except Exception as e:
+        logger.error(f"🔥 Error handling simulation response: {e}")
+        await update.message.reply_text(
+            "❌ Произошла ошибка при обработке ответа. Попробуйте еще раз.",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("🔄 Повторить", callback_data="retry_current_question")],
+                [InlineKeyboardButton("❌ Выйти", callback_data="abandon_full_sim")]
+            ])
+        )
+        current_part = context.user_data.get('current_part', 1)
+        return get_current_state(current_part)
+
+# Keep these for backward compatibility but redirect to the new handler
 async def handle_full_sim_part_1(update: Update, context: CallbackContext) -> int:
-    """Handle Part 1 response and move to Part 2"""
-    return await handle_full_sim_part_response(update, context, 1, FULL_SIM_PART_2)
+    """Handle Part 1 response"""
+    return await handle_simulation_response(update, context)
 
 async def handle_full_sim_part_2(update: Update, context: CallbackContext) -> int:
-    """Handle Part 2 response and move to Part 3"""
-    return await handle_full_sim_part_response(update, context, 2, FULL_SIM_PART_3)
+    """Handle Part 2 response"""
+    return await handle_simulation_response(update, context)
 
 async def handle_full_sim_part_3(update: Update, context: CallbackContext) -> int:
-    """Handle Part 3 response and complete simulation"""
-    return await handle_full_sim_part_response(update, context, 3, None)
+    """Handle Part 3 response"""
+    return await handle_simulation_response(update, context)
 
 async def handle_full_sim_part_response(update: Update, context: CallbackContext, 
                                       part_number: int, next_state: int) -> int:
-    """Generic handler for individual question responses within parts"""
+    """DEPRECATED: Generic handler for individual question responses within parts
+    
+    This function has been replaced by handle_simulation_response() which supports
+    single question display mode. Kept for backward compatibility only.
+    """
     user = update.effective_user
     
     try:
@@ -2741,7 +2990,7 @@ async def handle_full_sim_part_response(update: Update, context: CallbackContext
                 # Part 2 only has one cue card, so this shouldn't happen
                 next_prompt = context.user_data['current_speaking_prompt']
             else:
-                next_prompt = generate_speaking_question(part=f"Part {part_number}")
+                next_prompt = generate_single_speaking_question(part=f"Part {part_number}")
             
             context.user_data['current_speaking_prompt'] = next_prompt
             
@@ -2820,7 +3069,7 @@ async def handle_full_sim_part_response(update: Update, context: CallbackContext
                 context.user_data['current_question_key'] = next_question_key
                 
                 # Generate first question of next part
-                next_part_prompt = generate_speaking_question(part=f"Part {next_part}")
+                next_part_prompt = generate_single_speaking_question(part=f"Part {next_part}")
                 context.user_data['current_speaking_prompt'] = next_part_prompt
                 
                 # Get part info
@@ -3106,7 +3355,7 @@ async def skip_full_sim_part(update: Update, context: CallbackContext) -> int:
         return ConversationHandler.END
     
     # Generate next part question
-    next_part_prompt = generate_speaking_question(part=f"Part {next_state}")
+    next_part_prompt = generate_single_speaking_question(part=f"Part {next_state}")
     context.user_data['current_speaking_prompt'] = next_part_prompt
     context.user_data['current_part'] = next_state
     
@@ -3401,19 +3650,28 @@ full_speaking_simulation_handler = ConversationHandler(
     ],
     states={
         FULL_SIM_PART_1: [
-            MessageHandler(filters.VOICE, handle_full_sim_part_1),
-            CallbackQueryHandler(skip_full_sim_part, pattern=r'^skip_part_1$'),
-            CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$')
+            MessageHandler(filters.VOICE, handle_simulation_response),
+            CallbackQueryHandler(handle_skip_question, pattern=r'^skip_question$'),
+            CallbackQueryHandler(handle_retry_question, pattern=r'^retry_current_question$'),
+            CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$'),
+            # Keep old patterns for backward compatibility
+            CallbackQueryHandler(skip_full_sim_part, pattern=r'^skip_part_1$')
         ],
         FULL_SIM_PART_2: [
-            MessageHandler(filters.VOICE, handle_full_sim_part_2),
-            CallbackQueryHandler(skip_full_sim_part, pattern=r'^skip_part_2$'),
-            CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$')
+            MessageHandler(filters.VOICE, handle_simulation_response),
+            CallbackQueryHandler(handle_skip_question, pattern=r'^skip_question$'),
+            CallbackQueryHandler(handle_retry_question, pattern=r'^retry_current_question$'),
+            CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$'),
+            # Keep old patterns for backward compatibility
+            CallbackQueryHandler(skip_full_sim_part, pattern=r'^skip_part_2$')
         ],
         FULL_SIM_PART_3: [
-            MessageHandler(filters.VOICE, handle_full_sim_part_3),
-            CallbackQueryHandler(skip_full_sim_part, pattern=r'^skip_part_3$'),
-            CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$')
+            MessageHandler(filters.VOICE, handle_simulation_response),
+            CallbackQueryHandler(handle_skip_question, pattern=r'^skip_question$'),
+            CallbackQueryHandler(handle_retry_question, pattern=r'^retry_current_question$'),
+            CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$'),
+            # Keep old patterns for backward compatibility
+            CallbackQueryHandler(skip_full_sim_part, pattern=r'^skip_part_3$')
         ]
     },
     fallbacks=[
