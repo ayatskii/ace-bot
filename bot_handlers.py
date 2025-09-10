@@ -4191,6 +4191,130 @@ async def handle_confirm_clear_vocabulary(update: Update, context: CallbackConte
 
 # === ADMIN FUNCTIONS ===
 
+def add_user_to_permanent_whitelist(user_id: int) -> bool:
+    """Add user ID permanently to config.py whitelist"""
+    try:
+        config_file_path = 'config.py'
+        
+        # Read current config file
+        with open(config_file_path, 'r', encoding='utf-8') as file:
+            content = file.read()
+        
+        # Find the AUTHORIZED_USER_IDS section
+        import re
+        pattern = r'(AUTHORIZED_USER_IDS\s*=\s*\[)(.*?)(\])'
+        match = re.search(pattern, content, re.DOTALL)
+        
+        if match:
+            start, current_ids, end = match.groups()
+            
+            # Check if user_id already exists
+            if str(user_id) in current_ids:
+                return True  # Already exists
+            
+            # Add new user_id
+            if current_ids.strip():
+                new_ids = current_ids.rstrip() + f'\n    {user_id},'
+            else:
+                new_ids = f'\n    {user_id},'
+            
+            # Replace in content
+            new_content = content.replace(match.group(0), f'{start}{new_ids}\n{end}')
+            
+            # Write back to file
+            with open(config_file_path, 'w', encoding='utf-8') as file:
+                file.write(new_content)
+            
+            # Update runtime config
+            try:
+                config.AUTHORIZED_USER_IDS.append(user_id)
+            except Exception:
+                pass
+            
+            return True
+        
+    except Exception as e:
+        logger.error(f"Failed to add user {user_id} to permanent whitelist: {e}")
+        return False
+
+
+def remove_user_from_permanent_whitelist(user_id: int) -> bool:
+    """Remove user ID permanently from config.py whitelist"""
+    try:
+        config_file_path = 'config.py'
+        
+        # Read current config file
+        with open(config_file_path, 'r', encoding='utf-8') as file:
+            content = file.read()
+        
+        # Find and remove the user_id
+        import re
+        pattern = rf'\s*{user_id},?\s*\n?'
+        new_content = re.sub(pattern, '', content)
+        
+        # Write back to file
+        with open(config_file_path, 'w', encoding='utf-8') as file:
+            file.write(new_content)
+        
+        # Update runtime config
+        try:
+            if user_id in config.AUTHORIZED_USER_IDS:
+                config.AUTHORIZED_USER_IDS.remove(user_id)
+        except Exception:
+            pass
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Failed to remove user {user_id} from permanent whitelist: {e}")
+        return False
+
+
+def add_username_to_permanent_whitelist(username: str) -> bool:
+    """Add username permanently to config.py whitelist"""
+    try:
+        config_file_path = 'config.py'
+        
+        with open(config_file_path, 'r', encoding='utf-8') as file:
+            content = file.read()
+        
+        # Find the AUTHORIZED_USERNAMES section
+        import re
+        pattern = r'(AUTHORIZED_USERNAMES\s*=\s*\[)(.*?)(\])'
+        match = re.search(pattern, content, re.DOTALL)
+        
+        if match:
+            start, current_usernames, end = match.groups()
+            
+            # Check if username already exists
+            if f'"{username}"' in current_usernames:
+                return True
+            
+            # Add new username
+            if current_usernames.strip():
+                new_usernames = current_usernames.rstrip() + f',\n    "{username}",'
+            else:
+                new_usernames = f'\n    "{username}",'
+            
+            # Replace in content
+            new_content = content.replace(match.group(0), f'{start}{new_usernames}\n{end}')
+            
+            with open(config_file_path, 'w', encoding='utf-8') as file:
+                file.write(new_content)
+            
+            # Update runtime config
+            try:
+                config.AUTHORIZED_USERNAMES.append(username)
+            except Exception:
+                pass
+            
+            return True
+        
+    except Exception as e:
+        logger.error(f"Failed to add username {username} to permanent whitelist: {e}")
+        return False
+
+
 @require_admin
 async def admin_command(update: Update, context: CallbackContext) -> None:
     """Handle /admin command"""
@@ -4746,47 +4870,61 @@ async def admin_delete_user_command(update: Update, context: CallbackContext) ->
 
 @require_admin
 async def admin_add_user_command(update: Update, context: CallbackContext) -> None:
-    """Handle /adduser_<user_id> command"""
+    """Add user to whitelist permanently (admin only)"""
     command_text = update.message.text
     try:
         target_user_id = int(command_text.split('_')[1])
-        
-        # Add to whitelist programmatically (for session only)
-        if target_user_id not in config.AUTHORIZED_USER_IDS:
-            config.AUTHORIZED_USER_IDS.append(target_user_id)
+
+        # Check if user already has access
+        if target_user_id in config.AUTHORIZED_USER_IDS:
+            await update.message.reply_text(f"ℹ️ User {target_user_id} already has permanent access.")
+            return
+
+        # Add to permanent whitelist
+        if add_user_to_permanent_whitelist(target_user_id):
+            # Also add to database
+            try:
+                db.add_user(target_user_id)
+            except Exception as e:
+                logger.error(f"Failed to add user {target_user_id} to DB: {e}")
+
             await update.message.reply_text(
-                f"✅ Пользователь {target_user_id} добавлен в whitelist!\n"
-                f"⚠️ Чтобы сохранить навсегда, добавьте его ID в config.py"
+                f"✅ User {target_user_id} added to permanent whitelist!\n\n"
+                f"🔄 The user now has permanent access to the bot.\n"
+                f"📝 User ID added to config.py and will persist after bot restart."
             )
+
+            logger.info(f"Admin {update.effective_user.id} permanently added user {target_user_id} to whitelist")
         else:
-            await update.message.reply_text(f"⚠️ Пользователь {target_user_id} уже в whitelist!")
-            
+            await update.message.reply_text(f"❌ Failed to add user {target_user_id} to permanent whitelist.")
+
     except (ValueError, IndexError):
-        await update.message.reply_text("❌ Неверный формат команды. Используйте: /adduser_<user_id>")
+        await update.message.reply_text("❌ Invalid command format. Use: /adduser_123456")
 
 @require_admin
 async def admin_remove_user_command(update: Update, context: CallbackContext) -> None:
-    """Handle /removeuser_<user_id> command"""
+    """Remove user from whitelist permanently (admin only)"""
     command_text = update.message.text
     try:
         target_user_id = int(command_text.split('_')[1])
-        
+
         if target_user_id == update.effective_user.id:
-            await update.message.reply_text("❌ Вы не можете удалить себя из whitelist!")
+            await update.message.reply_text("❌ You cannot remove yourself from the whitelist!")
             return
-        
-        # Remove from whitelist programmatically (for session only)
-        if target_user_id in config.AUTHORIZED_USER_IDS:
-            config.AUTHORIZED_USER_IDS.remove(target_user_id)
+
+        # Remove from permanent whitelist
+        if remove_user_from_permanent_whitelist(target_user_id):
             await update.message.reply_text(
-                f"✅ Пользователь {target_user_id} удален из whitelist!\n"
-                f"⚠️ Чтобы сохранить навсегда, удалите его ID из config.py"
+                f"✅ User {target_user_id} removed from permanent whitelist!\n\n"
+                f"🚫 The user no longer has access to the bot.\n"
+                f"📝 User ID removed from config.py permanently."
             )
+            logger.info(f"Admin {update.effective_user.id} permanently removed user {target_user_id} from whitelist")
         else:
-            await update.message.reply_text(f"⚠️ Пользователь {target_user_id} не найден в whitelist!")
-            
+            await update.message.reply_text(f"❌ Failed to remove user {target_user_id} from permanent whitelist.")
+
     except (ValueError, IndexError):
-        await update.message.reply_text("❌ Неверный формат команды. Используйте: /removeuser_<user_id>")
+        await update.message.reply_text("❌ Invalid command format. Use: /removeuser_123456")
 
 @require_admin
 async def admin_whitelist_status_command(update: Update, context: CallbackContext) -> None:
