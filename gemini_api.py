@@ -283,8 +283,19 @@ def evaluate_writing(writing_text: str, task_description: str) -> str:
     """
     return generate_writing_text(prompt)
 
-def generate_single_speaking_question(part: str, topic: str = "a common topic") -> str:
-    """Generate a single IELTS speaking question for the specified part."""
+def generate_single_speaking_question(part: str, topic: str = "a common topic", avoid_phrases: list = None, difficulty: str = None, temperature: float = None, top_p: float = None) -> str:
+    """Generate a single IELTS speaking question for the specified part with uniqueness constraints."""
+    avoid_section = ""
+    if avoid_phrases:
+        # Keep only concise phrases and cap the list size
+        trimmed = [p.strip()[:140] for p in avoid_phrases if isinstance(p, str) and p.strip()]
+        if trimmed:
+            avoid_section = "\n\nConstraints: Do not repeat or closely paraphrase any of these phrases or questions: " + ", ".join(trimmed[:25]) + "."
+
+    difficulty_hint = ""
+    if difficulty:
+        difficulty_hint = f"\n\nLevel hint: Aim for {difficulty} complexity and vocabulary."
+
     if "part 2" in part.lower():
         prompt = f"""
         Generate one IELTS Speaking Part 2 cue card on the topic of "{topic}".
@@ -303,33 +314,37 @@ def generate_single_speaking_question(part: str, topic: str = "a common topic") 
         • [Fourth bullet point]
 
         And explain [what you should explain]
-
-        ⏰ Preparation Time: 1 minute
+        
         🎤 Speaking Time: 1-2 minutes
 
         **Do not add any other text, explanations, or introductory phrases. Use only the format above.**
+        {avoid_section}{difficulty_hint}
         """
     elif "part 3" in part.lower():
         prompt = f"""
         Generate one IELTS Speaking Part 3 discussion question related to the topic of "{topic}".
 
-        **Your output must be a single question only:**
+        **Your output must be a single question only (no extra text).**
+        **Limit: maximum 24 words.**
 
-        [One thought-provoking discussion question about {topic}]
+        [One discussion question about {topic}]
 
-        **Do not include any formatting, numbering, or additional text. Just provide one question.**
+        {avoid_section}{difficulty_hint}
         """
     else: # Default to Part 1
         prompt = f"""
         Generate one IELTS Speaking Part 1 personal question on the topic of "{topic}".
 
-        **Your output must be a single question only:**
+         **Your output must be a single question only (no extra text).**
+        **Limit: maximum 16 words.**
 
-        [One personal question about {topic}]
+        [One personal question about {topic} that avoids yes/no phrasing and varies angle (experience, routine, preference, or hypothetical).]
 
         **Do not include any formatting, numbering, or additional text. Just provide one question.**
+        {avoid_section}{difficulty_hint}
         """
-    return generate_text(prompt)
+    # Optionally pass generation parameters if supported by generate_text implementation
+    return generate_text(prompt, temperature=temperature, top_p=top_p) if 'temperature' in generate_text.__code__.co_varnames else generate_text(prompt)
 
 def generate_speaking_question(part: str, topic: str = "a common topic") -> str:
     """Constructs a strict prompt to generate only the IELTS speaking questions."""

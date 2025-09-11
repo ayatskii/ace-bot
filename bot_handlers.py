@@ -449,7 +449,7 @@ def generate_detailed_analysis_with_questions(part_scores: dict, question_transc
     analysis += "📝 <b>ПОДРОБНЫЙ АНАЛИЗ ПО ЧАСТЯМ И ВОПРОСАМ</b>\n\n"
     
     part_names = {1: "Короткие вопросы", 2: "Карточка-монолог", 3: "Дискуссия"}
-    total_questions_per_part = user_data.get('total_questions_per_part', {1: 3, 2: 1, 3: 3})
+    total_questions_per_part = user_data.get('total_questions_per_part', {1: 3, 2: 1, 3: 5})
     question_scores = user_data.get('question_scores', {})
     
     for part_num in sorted(part_scores.keys()):
@@ -2604,10 +2604,51 @@ async def display_single_question(update: Update, context: CallbackContext) -> N
     current_part = context.user_data.get('current_part', 1)
     question_num = context.user_data.get('current_question_in_part', 1)
     total_questions = context.user_data.get('total_questions_per_part', {}).get(current_part, 1)
-    
-    # Generate single question for current part
-    question = generate_single_speaking_question(f"Part {current_part}")
+
+    # Initialize session-scoped uniqueness tracking
+    used_topics = context.user_data.setdefault('used_topics', {1: set(), 3: set()})
+    session_questions = context.user_data.setdefault('generated_questions', [])
+
+    # Define curated topic pools
+    part1_pool = [
+        'home', 'work or studies', 'hobbies', 'travel', 'technology', 'food', 'holidays', 'friends and family', 'daily routine', 'environment'
+    ]
+    part3_pool = [
+        'education policy', 'technology and society', 'environment and sustainability', 'globalization', 'healthcare', 'culture and media', 'urbanization', 'economy and work', 'ethics and AI'
+    ]
+
+    # Helpers
+    def pick_topic_for_question(user_id: int, part: int) -> str:
+        import random
+        pool = part1_pool if part == 1 else part3_pool if part == 3 else ['general']
+        recent_topics = set(db.get_recent_topics(user_id, part, window_days=30))
+        candidates = [t for t in pool if t not in used_topics.get(part, set()) and t not in recent_topics]
+        if not candidates:
+            # Relax to allow topics not used in this session
+            candidates = [t for t in pool if t not in used_topics.get(part, set())]
+        if not candidates:
+            candidates = pool
+        choice = random.choice(candidates)
+        used_topics.setdefault(part, set()).add(choice)
+        return choice
+
+    def build_avoid_phrases_list(user_id: int, part: int) -> list:
+        recent = db.get_recent_questions(user_id, part, limit=200)
+        return (session_questions + recent)[-60:]
+
+    # Select topic and avoidance list
+    user_id = context.user_data.get('user_id')
+    topic = pick_topic_for_question(user_id, current_part)
+    avoid_phrases = build_avoid_phrases_list(user_id, current_part)
+
+    # Generate question with constraints
+    question = generate_single_speaking_question(part=f"Part {current_part}", topic=topic, avoid_phrases=avoid_phrases)
     context.user_data['current_question'] = question
+    session_questions.append(question)
+    try:
+        db.save_question_history(user_id, current_part, question, topic)
+    except Exception:
+        pass
     
     # Format question display with progress indicator
     question_text = format_question_display(current_part, question_num, total_questions, question)
@@ -2806,13 +2847,15 @@ async def start_full_speaking_simulation(update: Update, context: CallbackContex
             'simulation_start_time': time.time(),
             'current_part': 1,
             'current_question_in_part': 1,
-            'total_questions_per_part': {1: 3, 2: 1, 3: 3},  # Part 1: 3 questions, Part 2: 1 cue card, Part 3: 3 questions
+            'total_questions_per_part': {1: 3, 2: 1, 3: 5},  # Part 1: 3 questions, Part 2: 1 cue card, Part 3: 5 questions
             'question_scores': {},  # Store scores for each question
             'question_transcriptions': {},  # Store transcriptions for each question
             'question_evaluations': {},  # Store evaluations for each question
             'part_scores': {},  # Final part scores (average of questions)
             'user_id': user.id,
-            'current_question': None  # Current question text
+            'current_question': None,  # Current question text
+            'used_topics': {1: set(), 3: set()},
+            'generated_questions': []
         })
         
         # Show simulation start message
@@ -2821,7 +2864,7 @@ async def start_full_speaking_simulation(update: Update, context: CallbackContex
             f"📋 <b>Структура экзамена:</b>\n"
             f"• Часть 1: Короткие вопросы (3 вопроса)\n"
             f"• Часть 2: Карточка-монолог (1 задание)\n"
-            f"• Часть 3: Дискуссия (3 вопроса)\n\n"
+            f"• Часть 3: Дискуссия (5 вопросов)\n\n"
             f"<i>💡 <b>Важно:</b> Оценки будут показаны только в конце симуляции.\n"
             f"Каждый вопрос оценивается отдельно, и вы получите детальный анализ.</i>\n\n"
             f"🚀 <b>Начинаем с первого вопроса...</b>"
@@ -2990,7 +3033,27 @@ async def handle_full_sim_part_response(update: Update, context: CallbackContext
                 # Part 2 only has one cue card, so this shouldn't happen
                 next_prompt = context.user_data['current_speaking_prompt']
             else:
-                next_prompt = generate_single_speaking_question(part=f"Part {part_number}")
+                # Generate next question with uniqueness constraints
+                user_id = context.user_data.get('user_id')
+                used_topics = context.user_data.setdefault('used_topics', {1: set(), 3: set()})
+                session_questions = context.user_data.setdefault('generated_questions', [])
+                part1_pool = ['home', 'work or studies', 'hobbies', 'travel', 'technology', 'food', 'holidays', 'friends and family', 'daily routine', 'environment']
+                part3_pool = ['education policy', 'technology and society', 'environment and sustainability', 'globalization', 'healthcare', 'culture and media', 'urbanization', 'economy and work', 'ethics and AI']
+                import random
+                pool = part1_pool if part_number == 1 else part3_pool if part_number == 3 else ['general']
+                recent_topics = set(db.get_recent_topics(user_id, part_number, window_days=30))
+                candidates = [t for t in pool if t not in used_topics.get(part_number, set()) and t not in recent_topics]
+                if not candidates:
+                    candidates = [t for t in pool if t not in used_topics.get(part_number, set())] or pool
+                topic = random.choice(candidates)
+                used_topics.setdefault(part_number, set()).add(topic)
+                avoid_phrases = (session_questions + db.get_recent_questions(user_id, part_number, limit=200))[-60:]
+                next_prompt = generate_single_speaking_question(part=f"Part {part_number}", topic=topic, avoid_phrases=avoid_phrases)
+                session_questions.append(next_prompt)
+                try:
+                    db.save_question_history(user_id, part_number, next_prompt, topic)
+                except Exception:
+                    pass
             
             context.user_data['current_speaking_prompt'] = next_prompt
             
@@ -3069,7 +3132,27 @@ async def handle_full_sim_part_response(update: Update, context: CallbackContext
                 context.user_data['current_question_key'] = next_question_key
                 
                 # Generate first question of next part
-                next_part_prompt = generate_single_speaking_question(part=f"Part {next_part}")
+                # First question of next part with uniqueness constraints
+                user_id = context.user_data.get('user_id')
+                used_topics = context.user_data.setdefault('used_topics', {1: set(), 3: set()})
+                session_questions = context.user_data.setdefault('generated_questions', [])
+                part1_pool = ['home', 'work or studies', 'hobbies', 'travel', 'technology', 'food', 'holidays', 'friends and family', 'daily routine', 'environment']
+                part3_pool = ['education policy', 'technology and society', 'environment and sustainability', 'globalization', 'healthcare', 'culture and media', 'urbanization', 'economy and work', 'ethics and AI']
+                import random
+                pool = part1_pool if next_part == 1 else part3_pool if next_part == 3 else ['general']
+                recent_topics = set(db.get_recent_topics(user_id, next_part, window_days=30))
+                candidates = [t for t in pool if t not in used_topics.get(next_part, set()) and t not in recent_topics]
+                if not candidates:
+                    candidates = [t for t in pool if t not in used_topics.get(next_part, set())] or pool
+                topic = random.choice(candidates)
+                used_topics.setdefault(next_part, set()).add(topic)
+                avoid_phrases = (session_questions + db.get_recent_questions(user_id, next_part, limit=200))[-60:]
+                next_part_prompt = generate_single_speaking_question(part=f"Part {next_part}", topic=topic, avoid_phrases=avoid_phrases)
+                session_questions.append(next_part_prompt)
+                try:
+                    db.save_question_history(user_id, next_part, next_part_prompt, topic)
+                except Exception:
+                    pass
                 context.user_data['current_speaking_prompt'] = next_part_prompt
                 
                 # Get part info

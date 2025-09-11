@@ -38,6 +38,7 @@ class DatabaseManager:
                 self._migrate_users_table(cursor)
                 self._migrate_speaking_simulations_table(cursor)
                 self._migrate_writing_evaluations_table(cursor)
+                self._migrate_speaking_question_history(cursor)
                 
                 # Create user_words table to store saved vocabulary
                 cursor.execute('''
@@ -298,6 +299,7 @@ class DatabaseManager:
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_sessions ON speaking_simulations (user_id, started_at)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_session_status ON speaking_simulations (status)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_simulation_parts ON speaking_part_responses (simulation_id, part_number)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_question_history_user_part ON speaking_question_history (user_id, part_number, created_at)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_writing_evaluations ON writing_evaluations (user_id, evaluated_at)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_group_sent_words ON group_sent_words (group_id, sent_at)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_group_activity ON group_chats (last_activity)')
@@ -317,6 +319,23 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"🔥 Failed to initialize database: {e}")
             raise
+
+    def _migrate_speaking_question_history(self, cursor):
+        """Ensure speaking_question_history table exists for uniqueness tracking."""
+        try:
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS speaking_question_history (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id INTEGER NOT NULL,
+                    part_number INTEGER NOT NULL CHECK (part_number IN (1,2,3)),
+                    question_text TEXT NOT NULL,
+                    topic TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (user_id) REFERENCES users (user_id)
+                )
+            ''')
+        except Exception as e:
+            logger.error(f"🔥 Failed to ensure speaking_question_history table: {e}")
     
     def _migrate_users_table(self, cursor):
         """Migrate existing users table to add new admin columns"""
@@ -563,6 +582,55 @@ class DatabaseManager:
             logger.error(f"🔥 Failed to get user info for {user_id}: {e}")
             # Return basic info if database query fails
             return (user_id, None, None, None, 1, 0, None, None, None, None)
+
+    # === SPEAKING QUESTION HISTORY ===
+    def save_question_history(self, user_id: int, part_number: int, question_text: str, topic: str = None) -> bool:
+        """Persist generated question to history for deduplication."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO speaking_question_history (user_id, part_number, question_text, topic)
+                    VALUES (?, ?, ?, ?)
+                ''', (user_id, part_number, question_text.strip(), (topic or '').strip()))
+                conn.commit()
+                return True
+        except Exception as e:
+            logger.error(f"🔥 Failed to save question history for user {user_id}, part {part_number}: {e}")
+            return False
+
+    def get_recent_questions(self, user_id: int, part_number: int, limit: int = 200) -> List[str]:
+        """Fetch recent generated questions for a user and part."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT question_text FROM speaking_question_history
+                    WHERE user_id = ? AND part_number = ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                ''', (user_id, part_number, limit))
+                rows = cursor.fetchall()
+                return [r[0] for r in rows]
+        except Exception as e:
+            logger.error(f"🔥 Failed to get recent questions for user {user_id}, part {part_number}: {e}")
+            return []
+
+    def get_recent_topics(self, user_id: int, part_number: int, window_days: int = 30) -> List[str]:
+        """Fetch distinct topics used recently to avoid repeats across sessions."""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT DISTINCT COALESCE(topic, '') FROM speaking_question_history
+                    WHERE user_id = ? AND part_number = ?
+                      AND datetime(created_at) >= datetime('now', ?)
+                ''', (user_id, part_number, f'-{int(window_days)} days'))
+                rows = cursor.fetchall()
+                return [r[0] for r in rows if r[0]]
+        except Exception as e:
+            logger.error(f"🔥 Failed to get recent topics for user {user_id}, part {part_number}: {e}")
+            return []
 
     # === ADMIN FUNCTIONS ===
     
