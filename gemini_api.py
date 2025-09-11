@@ -314,8 +314,6 @@ def generate_single_speaking_question(part: str, topic: str = "a common topic", 
         • [Fourth bullet point]
 
         And explain [what you should explain]
-        
-        🎤 Speaking Time: 1-2 minutes
 
         **Do not add any other text, explanations, or introductory phrases. Use only the format above.**
         {avoid_section}{difficulty_hint}
