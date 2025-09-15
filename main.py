@@ -33,44 +33,48 @@ def main():
     application.add_handler(flashcard_handlers.flashcard_conversation_handler)
     logger.info("✅ Conversation handlers registered.")
 
-    # --- Standard Command Handlers ---
-    application.add_handler(CommandHandler("start", bot_handlers.start_command))
-    application.add_handler(CommandHandler("help", bot_handlers.help_command))
-    application.add_handler(CommandHandler("menu", bot_handlers.menu_command))
-    application.add_handler(CommandHandler("speaking", bot_handlers.handle_speaking_command))
-    application.add_handler(CommandHandler("info", bot_handlers.handle_info_command))
-    application.add_handler(CommandHandler("debug", bot_handlers.debug_conversation_state))  # Debug command
-    application.add_handler(CommandHandler("flashcards", flashcard_handlers.handle_flashcard_menu))  # Flashcard command
-    
-    # --- Group Chat Command Handlers ---
-    application.add_handler(CommandHandler("word", bot_handlers.handle_group_word_command))
-    application.add_handler(CommandHandler("groupstats", bot_handlers.handle_group_stats_command))
-    application.add_handler(CommandHandler("resetgroup", bot_handlers.handle_group_reset_command))
-    application.add_handler(CommandHandler("grouphistory", bot_handlers.handle_group_history_command))
-    application.add_handler(CommandHandler("autosend", bot_handlers.handle_group_autosend_command))
-    
-    # --- Admin Command Handlers ---
-    application.add_handler(CommandHandler("admin", bot_handlers.admin_command))
-    application.add_handler(CommandHandler("adminhelp", bot_handlers.admin_help_command))
-    application.add_handler(CommandHandler("testdb", bot_handlers.test_db_command))  # Debug command
-    application.add_handler(CommandHandler("whitelist", bot_handlers.admin_whitelist_status_command))  # Whitelist status
-    # Dynamic admin commands for user management
-    application.add_handler(MessageHandler(filters.Regex(r'^/block_\d+$'), bot_handlers.admin_block_user_command))
-    application.add_handler(MessageHandler(filters.Regex(r'^/unblock_\d+$'), bot_handlers.admin_unblock_user_command))
-    application.add_handler(MessageHandler(filters.Regex(r'^/delete_\d+$'), bot_handlers.admin_delete_user_command))
-    # Whitelist management commands
-    application.add_handler(MessageHandler(filters.Regex(r'^/adduser_\d+$'), bot_handlers.admin_add_user_command))
-    application.add_handler(MessageHandler(filters.Regex(r'^/removeuser_\d+$'), bot_handlers.admin_remove_user_command))
-    application.add_handler(MessageHandler(filters.Regex(r'^/addusername_.+$'), bot_handlers.admin_add_username_command))
-    application.add_handler(MessageHandler(filters.Regex(r'^/removeusername_.+$'), bot_handlers.admin_remove_username_command))
+    # --- Standard Command Handlers (PRIVATE ONLY) ---
+    application.add_handler(CommandHandler("start", bot_handlers.start_command, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("help", bot_handlers.help_command, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("menu", bot_handlers.menu_command, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("speaking", bot_handlers.handle_speaking_command, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("info", bot_handlers.handle_info_command, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("debug", bot_handlers.debug_conversation_state, filters=filters.ChatType.PRIVATE))  # Debug command
+    application.add_handler(CommandHandler("flashcards", flashcard_handlers.handle_flashcard_menu, filters=filters.ChatType.PRIVATE))  # Flashcard command
+
+    # --- Group Chat Command Handlers (GROUPS ONLY) ---
+    application.add_handler(CommandHandler("word", bot_handlers.handle_group_word_command, 
+                                     filters=filters.ChatType.GROUP | filters.ChatType.SUPERGROUP))
+    application.add_handler(CommandHandler("autosend", bot_handlers.handle_group_autosend_command, 
+                                     filters=filters.ChatType.GROUP | filters.ChatType.SUPERGROUP))
+
+    # --- Admin Command Handlers (PRIVATE ONLY) ---
+    application.add_handler(CommandHandler("admin", bot_handlers.admin_command, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("adminhelp", bot_handlers.admin_help_command, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("testdb", bot_handlers.test_db_command, filters=filters.ChatType.PRIVATE))  # Debug command
+    application.add_handler(CommandHandler("whitelist", bot_handlers.admin_whitelist_status_command, filters=filters.ChatType.PRIVATE))  # Whitelist status
+    # Dynamic admin commands for user management (PRIVATE ONLY)
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.Regex(r'^/block_\d+$'), bot_handlers.admin_block_user_command))
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.Regex(r'^/unblock_\d+$'), bot_handlers.admin_unblock_user_command))
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.Regex(r'^/delete_\d+$'), bot_handlers.admin_delete_user_command))
+    # Whitelist management commands (PRIVATE ONLY)
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.Regex(r'^/adduser_\d+$'), bot_handlers.admin_add_user_command))
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.Regex(r'^/removeuser_\d+$'), bot_handlers.admin_remove_user_command))
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.Regex(r'^/addusername_.+$'), bot_handlers.admin_add_username_command))
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.Regex(r'^/removeusername_.+$'), bot_handlers.admin_remove_username_command))
+
+    # --- Move group management to private (optional but recommended) ---
+    application.add_handler(CommandHandler("groupstats", bot_handlers.handle_group_stats_command, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("resetgroup", bot_handlers.handle_group_reset_command, filters=filters.ChatType.PRIVATE))
+    application.add_handler(CommandHandler("grouphistory", bot_handlers.handle_group_history_command, filters=filters.ChatType.PRIVATE))
     
     logger.info("✅ Command handlers registered.")
 
-    # --- Global Text Input Handlers (for topic selection) ---
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot_handlers.handle_global_text_input))
-    
-    # --- Voice Message Handler (for speaking practice) ---
-    application.add_handler(MessageHandler(filters.VOICE, bot_handlers.handle_voice_message))
+    # --- Global Text Input Handlers (PRIVATE ONLY) ---
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT & ~filters.COMMAND), bot_handlers.handle_global_text_input))
+
+    # --- Voice Message Handler (PRIVATE ONLY) ---
+    application.add_handler(MessageHandler(filters.ChatType.PRIVATE & filters.VOICE, bot_handlers.handle_voice_message))
     
     logger.info("✅ Global text input and voice message handlers registered.")
 
@@ -116,6 +120,20 @@ def main():
     
     logger.info("✅ Callback query handlers registered.")
 
+    # --- Wrong-context helpers for common private commands attempted in groups ---
+    async def wrong_context_handler(update: Update, context):
+        if update.message:
+            await update.message.reply_text(
+                "🤖 This command only works in private chats!\n👆 Click my name and message me directly."
+            )
+
+    application.add_handler(CommandHandler("start", wrong_context_handler, 
+                                     filters=filters.ChatType.GROUP | filters.ChatType.SUPERGROUP))
+    application.add_handler(CommandHandler("menu", wrong_context_handler, 
+                                     filters=filters.ChatType.GROUP | filters.ChatType.SUPERGROUP))
+    application.add_handler(CommandHandler("speaking", wrong_context_handler, 
+                                     filters=filters.ChatType.GROUP | filters.ChatType.SUPERGROUP))
+
     # --- Error Handler ---
     application.add_error_handler(bot_handlers.error_handler)
 
@@ -140,6 +158,16 @@ def main():
         )
         
         logger.info(f"✅ Auto-send job scheduler initialized (checks every {config.AUTO_SEND_CHECK_INTERVAL}s, daily at {config.DAILY_SEND_TIME_HOUR}:{config.DAILY_SEND_TIME_MINUTE:02d})")
+
+    # --- Ignore all non-command messages in groups (ADD THIS LAST) ---
+    async def ignore_group_messages(update: Update, context):
+        # Silently ignore
+        return
+
+    application.add_handler(MessageHandler(
+        (filters.ChatType.GROUP | filters.ChatType.SUPERGROUP) & ~filters.COMMAND,
+        ignore_group_messages
+    ))
 
     # Run the bot
     logger.info("Bot started polling...")

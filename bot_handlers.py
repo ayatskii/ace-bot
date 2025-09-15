@@ -446,7 +446,7 @@ def generate_detailed_analysis_with_questions(part_scores: dict, question_transc
     analysis += "\n"
     
     # Part-by-part analysis with question breakdown
-    analysis += "📝 <b>ПОДРОБНЫЙ АНАЛИЗ ПО ЧАСТЯМ И ВОПРОСАМ</b>\n\n"
+    analysis += "📝 <b>ПОДРОБНЫЙ АНАЛИЗ ПО ЧАСТЯМ</b>\n\n"
     
     part_names = {1: "Короткие вопросы", 2: "Карточка-монолог", 3: "Дискуссия"}
     total_questions_per_part = user_data.get('total_questions_per_part', {1: 3, 2: 1, 3: 5})
@@ -459,26 +459,6 @@ def generate_detailed_analysis_with_questions(part_scores: dict, question_transc
         
         analysis += f"🎯 <b>Часть {part_num}: {part_name}</b>\n"
         analysis += f"<b>Средний результат части:</b> {part_score:.1f}/9\n\n"
-        
-        # Show individual questions within this part
-        for q in range(1, total_questions + 1):
-            question_key = f"part_{part_num}_q_{q}"
-            q_score = question_scores.get(question_key, 0)
-            q_transcription = question_transcriptions.get(question_key, "Недоступно")
-            q_evaluation = question_evaluations.get(question_key, "Недоступно")
-            
-            analysis += f"<b>   🔹 Вопрос {q}:</b> {q_score:.1f}/9\n"
-            
-            # Show part of transcription
-            if q_transcription != "Недоступно":
-                analysis += f"   <b>Ваш ответ:</b>\n"
-                analysis += f"   <i>«{q_transcription[:150]}{'...' if len(q_transcription) > 150 else ''}»</i>\n\n"
-            
-            # Show evaluation summary for this question
-            if q_evaluation != "Недоступно":
-                # Show a truncated version of the evaluation (first 100 characters)
-                eval_summary = q_evaluation[:100] + "..." if len(q_evaluation) > 100 else q_evaluation
-                analysis += f"   <b>Краткая оценка:</b>\n   <i>{eval_summary}</i>\n\n"
             
         analysis += "─────────────────\n\n"
     
@@ -3631,29 +3611,29 @@ async def handle_writing_stats(update: Update, context: CallbackContext) -> None
 
 # --- Conversation Handlers Setup (for main.py) ---
 writing_conversation_handler = ConversationHandler(
-    entry_points=[CommandHandler("writing", start_writing_task)],
+    entry_points=[CommandHandler("writing", start_writing_task, filters=filters.ChatType.PRIVATE)],
     states={
         GET_WRITING_TOPIC: [
             CallbackQueryHandler(handle_writing_task_type_callback, pattern=r'^writing_task_type_\d$'),
             CallbackQueryHandler(handle_writing_check_callback, pattern=r'^writing_check$'),
             CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$'),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_topic_input)
+            MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT & ~filters.COMMAND), handle_writing_topic_input)
         ],
         GET_WRITING_SUBMISSION: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_submission),
+            MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT & ~filters.COMMAND), handle_writing_submission),
             CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$'),
         ],
         GET_WRITING_CHECK_TASK: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_check_task_input),
+            MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT & ~filters.COMMAND), handle_writing_check_task_input),
         ],
         GET_WRITING_CHECK_ESSAY: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_check_essay_input),
+            MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT & ~filters.COMMAND), handle_writing_check_essay_input),
         ],
     },
     fallbacks=[
-        CommandHandler("cancel", cancel),
+        CommandHandler("cancel", cancel, filters=filters.ChatType.PRIVATE),
         # Add a fallback for any text input to ensure writing submissions are handled
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_writing_submission_fallback)
+        MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT & ~filters.COMMAND), handle_writing_submission_fallback)
     ],
     name="writing_conversation",
     persistent=False,
@@ -3661,22 +3641,22 @@ writing_conversation_handler = ConversationHandler(
 )
 
 grammar_conversation_handler = ConversationHandler(
-    entry_points=[CommandHandler("grammar", start_grammar_explanation)],
+    entry_points=[CommandHandler("grammar", start_grammar_explanation, filters=filters.ChatType.PRIVATE)],
     states={
         GET_GRAMMAR_TOPIC: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, get_grammar_topic),
+            MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT & ~filters.COMMAND), get_grammar_topic),
         ],
     },
-    fallbacks=[CommandHandler("cancel", cancel)],
+    fallbacks=[CommandHandler("cancel", cancel, filters=filters.ChatType.PRIVATE)],
     name="grammar_conversation",
     persistent=False
 )
 
 vocabulary_conversation_handler = ConversationHandler(
     entry_points=[
-        CommandHandler("vocabulary", start_vocabulary_selection),
-        CommandHandler("customword", custom_word_command),
-        CommandHandler("aicustomword", ai_custom_word_command),
+        CommandHandler("vocabulary", start_vocabulary_selection, filters=filters.ChatType.PRIVATE),
+        CommandHandler("customword", custom_word_command, filters=filters.ChatType.PRIVATE),
+        CommandHandler("aicustomword", ai_custom_word_command, filters=filters.ChatType.PRIVATE),
         CallbackQueryHandler(start_custom_word_input, pattern=r'^custom_word_add$'),
         CallbackQueryHandler(handle_ai_enhanced_custom_word, pattern=r'^ai_enhanced_custom_word$')
     ],
@@ -3684,30 +3664,30 @@ vocabulary_conversation_handler = ConversationHandler(
         GET_VOCABULARY_TOPIC: [
             CallbackQueryHandler(handle_vocabulary_choice_callback, pattern=r'^vocabulary_(random|topic|custom|ai_enhanced)$'),
             CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$'),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, get_topic_and_generate_vocabulary)
+            MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT & ~filters.COMMAND), get_topic_and_generate_vocabulary)
         ],
         GET_CUSTOM_WORD: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_word_input),
+            MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT & ~filters.COMMAND), handle_custom_word_input),
             CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
             CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$')
         ],
         GET_CUSTOM_WORD_DEFINITION: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_word_definition),
+            MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT & ~filters.COMMAND), handle_custom_word_definition),
             CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
             CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$')
         ],
         GET_CUSTOM_WORD_TRANSLATION: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_word_translation),
+            MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT & ~filters.COMMAND), handle_custom_word_translation),
             CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
             CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$')
         ],
         GET_CUSTOM_WORD_EXAMPLE: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_word_example),
+            MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT & ~filters.COMMAND), handle_custom_word_example),
             CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
             CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$')
         ],
         GET_CUSTOM_WORD_TOPIC: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_word_topic),
+            MessageHandler(filters.ChatType.PRIVATE & (filters.TEXT & ~filters.COMMAND), handle_custom_word_topic),
             CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
             CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$')
         ],
@@ -3715,7 +3695,7 @@ vocabulary_conversation_handler = ConversationHandler(
     fallbacks=[
         CallbackQueryHandler(menu_button_callback, pattern=r'^menu_vocabulary$'),
         CallbackQueryHandler(menu_button_callback, pattern=r'^back_to_main_menu$'),
-        CommandHandler("cancel", cancel)
+        CommandHandler("cancel", cancel, filters=filters.ChatType.PRIVATE)
     ],
     name="vocabulary_conversation",
     persistent=False,
@@ -3733,7 +3713,7 @@ full_speaking_simulation_handler = ConversationHandler(
     ],
     states={
         FULL_SIM_PART_1: [
-            MessageHandler(filters.VOICE, handle_simulation_response),
+            MessageHandler(filters.ChatType.PRIVATE & filters.VOICE, handle_simulation_response),
             CallbackQueryHandler(handle_skip_question, pattern=r'^skip_question$'),
             CallbackQueryHandler(handle_retry_question, pattern=r'^retry_current_question$'),
             CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$'),
@@ -3741,7 +3721,7 @@ full_speaking_simulation_handler = ConversationHandler(
             CallbackQueryHandler(skip_full_sim_part, pattern=r'^skip_part_1$')
         ],
         FULL_SIM_PART_2: [
-            MessageHandler(filters.VOICE, handle_simulation_response),
+            MessageHandler(filters.ChatType.PRIVATE & filters.VOICE, handle_simulation_response),
             CallbackQueryHandler(handle_skip_question, pattern=r'^skip_question$'),
             CallbackQueryHandler(handle_retry_question, pattern=r'^retry_current_question$'),
             CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$'),
@@ -3749,7 +3729,7 @@ full_speaking_simulation_handler = ConversationHandler(
             CallbackQueryHandler(skip_full_sim_part, pattern=r'^skip_part_2$')
         ],
         FULL_SIM_PART_3: [
-            MessageHandler(filters.VOICE, handle_simulation_response),
+            MessageHandler(filters.ChatType.PRIVATE & filters.VOICE, handle_simulation_response),
             CallbackQueryHandler(handle_skip_question, pattern=r'^skip_question$'),
             CallbackQueryHandler(handle_retry_question, pattern=r'^retry_current_question$'),
             CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$'),
@@ -3759,7 +3739,7 @@ full_speaking_simulation_handler = ConversationHandler(
     },
     fallbacks=[
         CallbackQueryHandler(abandon_full_simulation, pattern=r'^abandon_full_sim$'),
-        CommandHandler("cancel", cancel_full_simulation)
+        CommandHandler("cancel", cancel_full_simulation, filters=filters.ChatType.PRIVATE)
     ],
     name="full_speaking_simulation",
     persistent=False,
