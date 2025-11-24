@@ -1,14 +1,14 @@
 # Telegram Bot API
 python-telegram-bot==20.7
 
-# Google Generative AI (Gemini API)
-google-generativeai==0.3.2
+# Google Cloud Vertex AI (Gemini via Vertex AI)
+google-cloud-aiplatform>=1.38.0
 
 # Environment variables management
 python-dotenv==1.0.0
 
 # Audio processing and transcription
-elevenlabs==1.6.2
+elevenlabs==2.24.0
 requests==2.31.0
 
 # Standard library dependencies (included with Python)

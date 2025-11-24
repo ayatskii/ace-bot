@@ -1,59 +1,31 @@
-import logging
-import vertexai
-from vertexai.generative_models import GenerativeModel, GenerationConfig
-import time
-import hashlib
-import random
-import os
-
-import config
-
-logger = logging.getLogger(__name__)
-
-model = None
-writing_model = None
-
-# System instruction to be prepended to prompts
-SYSTEM_INSTRUCTION = """You are an elite IELTS tutor and examiner with a 9.0 score. Your responses must be accurate, professional, and directly address the user's request without any unnecessary conversational text. When the user interface is in Russian, provide your responses in Russian as well."""
-
-def initialize_gemini():
-    """Initializes the Gemini models via Vertex AI with the configured project and region."""
-    global model, writing_model
     try:
-        # Initialize Vertex AI with project and region from config
-        vertexai.init(project=config.GOOGLE_CLOUD_PROJECT, location=config.GOOGLE_CLOUD_REGION)
+        genai.configure(api_key=config.GEMINI_API_KEY)
         
-        # Configure generation settings for flash model (general use)
-        generation_config = GenerationConfig(
+        generation_config = genai.GenerationConfig(
             temperature=0.9,
             top_p=0.95,
             top_k=50
         )
         
-        # Initialize the general-purpose flash model
-        model = GenerativeModel(
-            model_name='gemini-2.0-flash-exp',
-            generation_config=generation_config,
-            system_instruction=SYSTEM_INSTRUCTION
+        model = genai.GenerativeModel(
+            model_name='gemini-2.5-flash',
+            generation_config=generation_config
         )
         
-        # Configure generation settings for pro model (writing evaluation)
-        writing_config = GenerationConfig(
+        writing_config = genai.GenerationConfig(
             temperature=0.7,
             top_p=0.8,
             top_k=40
         )
         
-        # Initialize the writing-specific pro model
-        writing_model = GenerativeModel(
-            model_name='gemini-2.0-flash-exp',
-            generation_config=writing_config,
-            system_instruction=SYSTEM_INSTRUCTION
+        writing_model = genai.GenerativeModel(
+            model_name='gemini-2.5-pro',
+            generation_config=writing_config
         )
         
-        logger.info(f"✅ Vertex AI models initialized (Project: {config.GOOGLE_CLOUD_PROJECT}, Region: {config.GOOGLE_CLOUD_REGION})")
+        logger.info("✅ Gemini API models initialized successfully.")
     except Exception as e:
-        logger.error(f"🔥 Failed to initialize Vertex AI: {e}")
+        logger.error(f"🔥 Failed to initialize Gemini API: {e}")
         raise
 
 
