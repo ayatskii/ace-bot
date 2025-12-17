@@ -41,7 +41,7 @@ def initialize_gemini():
         
         # Initialize the general-purpose flash model
         model = GenerativeModel(
-            model_name='gemini-2.0-flash-exp',
+            model_name='gemini-1.5-flash',
             generation_config=generation_config,
             system_instruction=SYSTEM_INSTRUCTION
         )
@@ -55,7 +55,7 @@ def initialize_gemini():
         
         # Initialize the writing-specific pro model
         writing_model = GenerativeModel(
-            model_name='gemini-2.0-flash-exp',
+            model_name='gemini-1.5-flash',
             generation_config=writing_config,
             system_instruction=SYSTEM_INSTRUCTION
         )
@@ -97,12 +97,24 @@ def generate_text_with_retry(prompt: str, max_retries: int = 3, base_delay: floa
             return response_text
             
         except Exception as e:
+            error_message = str(e)
             logger.error(f"🔥 An error occurred while generating text with Gemini (attempt {attempt + 1}): {e}")
+            
+            # Check if it's a quota/rate limit error (429)
+            is_quota_error = "429" in error_message or "quota" in error_message.lower() or "rate limit" in error_message.lower()
+            
             if attempt < max_retries - 1:
-                delay = base_delay * (2 ** attempt)  # Exponential backoff
-                logger.info(f"🔄 Retrying in {delay} seconds...")
+                # Use longer delays for quota errors
+                if is_quota_error:
+                    delay = min(base_delay * (3 ** attempt), 60)  # More aggressive backoff, max 60s
+                    logger.warning(f"⏳ Quota/rate limit hit. Waiting {delay} seconds before retry...")
+                else:
+                    delay = base_delay * (2 ** attempt)  # Standard exponential backoff
+                    logger.info(f"🔄 Retrying in {delay} seconds...")
                 time.sleep(delay)
             else:
+                if is_quota_error:
+                    return "Sorry, the AI service is currently experiencing high demand. Please try again in a few moments."
                 return "Sorry, I encountered an error while processing your request."
 
 
@@ -142,12 +154,24 @@ def generate_writing_text_with_retry(prompt: str, max_retries: int = 3, base_del
             return response_text
             
         except Exception as e:
+            error_message = str(e)
             logger.error(f"🔥 An error occurred while generating writing text with Gemini Pro (attempt {attempt + 1}): {e}")
+            
+            # Check if it's a quota/rate limit error (429)
+            is_quota_error = "429" in error_message or "quota" in error_message.lower() or "rate limit" in error_message.lower()
+            
             if attempt < max_retries - 1:
-                delay = base_delay * (2 ** attempt)  # Exponential backoff
-                logger.info(f"🔄 Retrying writing generation in {delay} seconds...")
+                # Use longer delays for quota errors
+                if is_quota_error:
+                    delay = min(base_delay * (3 ** attempt), 60)  # More aggressive backoff, max 60s
+                    logger.warning(f"⏳ Quota/rate limit hit. Waiting {delay} seconds before retry...")
+                else:
+                    delay = base_delay * (2 ** attempt)  # Standard exponential backoff
+                    logger.info(f"🔄 Retrying writing generation in {delay} seconds...")
                 time.sleep(delay)
             else:
+                if is_quota_error:
+                    return "Sorry, the AI service is currently experiencing high demand. Please try again in a few moments."
                 return "Sorry, I encountered an error while processing your writing evaluation."
 
 
