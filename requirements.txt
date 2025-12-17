@@ -1,5 +1,5 @@
 # Telegram Bot API
-python-telegram-bot==20.7
+python-telegram-bot[job-queue]==20.7
 
 # Google Cloud Vertex AI (Gemini via Vertex AI)
 google-cloud-aiplatform>=1.38.0
