@@ -20,6 +20,15 @@ def initialize_gemini():
     """Initializes the Gemini models via Vertex AI with the configured project and region."""
     global model, writing_model
     try:
+        # Explicitly set up credentials from service account file
+        credentials_path = config.GOOGLE_APPLICATION_CREDENTIALS
+        if credentials_path and os.path.exists(credentials_path):
+            logger.info(f"✅ Using credentials from: {credentials_path}")
+            # Set environment variable explicitly (some systems need this)
+            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = credentials_path
+        else:
+            logger.warning(f"⚠️ Credentials file not found at: {credentials_path}")
+        
         # Initialize Vertex AI with project and region from config
         vertexai.init(project=config.GOOGLE_CLOUD_PROJECT, location=config.GOOGLE_CLOUD_REGION)
         
